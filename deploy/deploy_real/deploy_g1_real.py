@@ -227,7 +227,17 @@ class mini_g1_real:
             _kds = self.config.kds + self.config.arm_waist_kds
         else:
             _kds = kds
+        
+        print(_target_pos[0:6])
+        print(_target_pos[6:12])
+        print(_target_pos[12:15])
+        print(_target_pos[15:22])
+        print(_target_pos[22:29])
+        _target_pos[0:6] *= 0
+        _target_pos[6:12] *= 0
 
+        _target_pos[13:15] *= 0
+        # _kps[13:15] *= 7
         for j in range(dof_size):
             motor_idx = dof_idx[j]
             self.low_cmd.motor_cmd[motor_idx].q = _target_pos[j]
@@ -235,6 +245,13 @@ class mini_g1_real:
             self.low_cmd.motor_cmd[motor_idx].kp = _kps[j]
             self.low_cmd.motor_cmd[motor_idx].kd = _kds[j]
             self.low_cmd.motor_cmd[motor_idx].tau = 0
+        # for j in range(len(self.config.leg_joint2motor_idx)):
+        #     motor_idx = self.config.leg_joint2motor_idx[j]
+        #     self.low_cmd.motor_cmd[motor_idx].q = _target_pos[j]*0
+        #     self.low_cmd.motor_cmd[motor_idx].qd = 0
+        #     self.low_cmd.motor_cmd[motor_idx].kp = _kps[j]
+        #     self.low_cmd.motor_cmd[motor_idx].kd = _kds[j]
+        #     self.low_cmd.motor_cmd[motor_idx].tau = 0
         self.send_cmd(self.low_cmd)
 
     def run(self):
@@ -252,6 +269,68 @@ class real(infere, mini_g1_real):
         super().__init__()
         super(infere,self).__init__(config)
 
+    def move_to_default_pos(self):
+        print("[REAL] Moving to default pos.")
+        # move time 2s
+        total_time = 2
+        num_step = int(total_time / self.config.control_dt)
+
+        dof_idx = (
+            self.config.leg_joint2motor_idx + self.config.arm_waist_joint2motor_idx
+        )
+        kps = self.config.kps + self.config.arm_waist_kps
+        kds = self.config.kds + self.config.arm_waist_kds
+        default_pos = self.first_frame_pos
+        dof_size = len(dof_idx)
+
+        # record the current pos
+        init_dof_pos = np.zeros(dof_size, dtype=np.float32)
+        for i in range(dof_size):
+            init_dof_pos[i] = self.low_state.motor_state[dof_idx[i]].q
+
+        # move to default pos
+        for i in range(num_step):
+            alpha = i / num_step
+            for j in range(dof_size):
+                motor_idx = dof_idx[j]
+                target_pos = default_pos[j]
+                self.low_cmd.motor_cmd[motor_idx].q = (
+                    init_dof_pos[j] * (1 - alpha) + target_pos * alpha
+                )
+                self.low_cmd.motor_cmd[motor_idx].qd = 0
+                self.low_cmd.motor_cmd[motor_idx].kp = kps[j]
+                self.low_cmd.motor_cmd[motor_idx].kd = kds[j]
+                self.low_cmd.motor_cmd[motor_idx].tau = 0
+            self.send_cmd(self.low_cmd)
+            time.sleep(self.config.control_dt)
+
+    def default_pos_state(self):
+        print("[REAL] Enter default pos state.")
+        print("[REAL] Waiting for the Button A signal...")
+        print(self.first_frame_pos[0:6])
+        print(self.first_frame_pos[6:12])
+        print(self.first_frame_pos[12:15])
+        print(self.first_frame_pos[15:22])
+        print(self.first_frame_pos[22:29])
+        while self.remote_controller.button[KeyMap.A] != 1:
+            for i in range(len(self.config.leg_joint2motor_idx)):
+                motor_idx = self.config.leg_joint2motor_idx[i]
+                self.low_cmd.motor_cmd[motor_idx].q = self.first_frame_pos[motor_idx]
+                self.low_cmd.motor_cmd[motor_idx].qd = 0
+                self.low_cmd.motor_cmd[motor_idx].kp = self.config.kps[i]
+                self.low_cmd.motor_cmd[motor_idx].kd = self.config.kds[i]
+                self.low_cmd.motor_cmd[motor_idx].tau = 0
+            for i in range(len(self.config.arm_waist_joint2motor_idx)):
+                motor_idx = self.config.arm_waist_joint2motor_idx[i]
+                self.low_cmd.motor_cmd[motor_idx].q = self.first_frame_pos[motor_idx]
+                # print(i, motor_idx, self.first_frame_pos[i])
+                self.low_cmd.motor_cmd[motor_idx].qd = 0
+                self.low_cmd.motor_cmd[motor_idx].kp = self.config.arm_waist_kps[i]*0.1
+                self.low_cmd.motor_cmd[motor_idx].kd = self.config.arm_waist_kds[i]
+                self.low_cmd.motor_cmd[motor_idx].tau = 0
+            self.send_cmd(self.low_cmd)
+            time.sleep(self.config.control_dt)
+
     def run(self):
         self.counter += 1
         self.perpare_data()
@@ -263,7 +342,7 @@ class real(infere, mini_g1_real):
         if self.time_step >= self.motion.time_step_total:
             self.time_step = 1
         # send the command
-        self.update_cmd(self.target_dof_pos,kps = self.P_gains,kds = self.D_gains)
+        self.update_cmd(target_pos = self.target_dof_pos,kps = self.P_gains,kds = self.D_gains)
         time.sleep(self.config.control_dt)
 
     def _obs_motion_joint_pos_command(self):

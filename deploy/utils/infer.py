@@ -15,6 +15,7 @@ class infere:
         self._init_policy_conf()
         self.pin = pin_mj(cfg)
         self.obs_manager = SimpleObservationManager(ObsCfg(), self)
+        self.first_frame_pos = np.copy(self.motion.joint_pos[0])[self.isaac_sim2mujoco_index]
 
     def _init_policy_conf(self):
         self.body_indexes = np.asarray(
