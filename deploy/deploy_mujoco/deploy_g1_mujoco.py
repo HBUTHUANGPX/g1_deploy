@@ -28,7 +28,7 @@ class simulator(infere):
 
         self._init_robot_conf()
         super().__init__()
-        
+
         self.paused = False
         self.change_id = 0
         self.video_recorder = VideoRecorder(
@@ -189,7 +189,7 @@ class simulator(infere):
         else:
             self.minimum_infer()
         self.time_step += 1
-        print(f"time_step: {self.time_step}")
+        # print(f"time_step: {self.time_step}")
         self.contact_force()
         self.sim_loop()
         # 更新 Renderer 场景，使用查看器的相机和选项，使图像与窗口一致
