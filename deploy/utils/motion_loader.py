@@ -1,7 +1,6 @@
 import os
 import numpy as np
 from collections.abc import Sequence
-import torch
 
 class MotionLoader:
     def __init__(
@@ -35,30 +34,30 @@ class MotionLoader:
                 ), "All motion files must have the same fps."
 
             joint_pos_list.append(
-                torch.tensor(data["joint_pos"], dtype=torch.float32, device=device)
+                np.asarray(data["joint_pos"], dtype=np.float32)
             )
             joint_vel_list.append(
-                torch.tensor(data["joint_vel"], dtype=torch.float32, device=device)
+                np.asarray(data["joint_vel"], dtype=np.float32)
             )
             body_pos_w_list.append(
-                torch.tensor(data["body_pos_w"], dtype=torch.float32, device=device)
+                np.asarray(data["body_pos_w"], dtype=np.float32)
             )
             body_quat_w_list.append(
-                torch.tensor(data["body_quat_w"], dtype=torch.float32, device=device)
+                np.asarray(data["body_quat_w"], dtype=np.float32)
             )
             body_lin_vel_w_list.append(
-                torch.tensor(data["body_lin_vel_w"], dtype=torch.float32, device=device)
+                np.asarray(data["body_lin_vel_w"], dtype=np.float32)
             )
             body_ang_vel_w_list.append(
-                torch.tensor(data["body_ang_vel_w"], dtype=torch.float32, device=device)
+                np.asarray(data["body_ang_vel_w"], dtype=np.float32)
             )
         # Concatenate along time dimension (dim=0)
-        self.joint_pos = torch.cat(joint_pos_list, dim=0)
-        self.joint_vel = torch.cat(joint_vel_list, dim=0)
-        self._body_pos_w = torch.cat(body_pos_w_list, dim=0)
-        self._body_quat_w = torch.cat(body_quat_w_list, dim=0)
-        self._body_lin_vel_w = torch.cat(body_lin_vel_w_list, dim=0)
-        self._body_ang_vel_w = torch.cat(body_ang_vel_w_list, dim=0)
+        self.joint_pos = np.concatenate(joint_pos_list, axis=0)
+        self.joint_vel = np.concatenate(joint_vel_list, axis=0)
+        self._body_pos_w = np.concatenate(body_pos_w_list, axis=0)
+        self._body_quat_w = np.concatenate(body_quat_w_list, axis=0)
+        self._body_lin_vel_w = np.concatenate(body_lin_vel_w_list, axis=0)
+        self._body_ang_vel_w = np.concatenate(body_ang_vel_w_list, axis=0)
 
         print("self.joint_pos.shape: ",self.joint_pos.shape)
         print("self.joint_vel.shape: ",self.joint_vel.shape)
@@ -70,18 +69,17 @@ class MotionLoader:
         self.time_step_total = self.joint_pos.shape[0]
 
     @property
-    def body_pos_w(self) -> torch.Tensor:
+    def body_pos_w(self) -> np.ndarray:
         return self._body_pos_w[:, self._body_indexes]
 
     @property
-    def body_quat_w(self) -> torch.Tensor:
+    def body_quat_w(self) -> np.ndarray:
         return self._body_quat_w[:, self._body_indexes]
 
     @property
-    def body_lin_vel_w(self) -> torch.Tensor:
+    def body_lin_vel_w(self) -> np.ndarray:
         return self._body_lin_vel_w[:, self._body_indexes]
 
     @property
-    def body_ang_vel_w(self) -> torch.Tensor:
+    def body_ang_vel_w(self) -> np.ndarray:
         return self._body_ang_vel_w[:, self._body_indexes]
-

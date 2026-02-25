@@ -5,6 +5,9 @@ from deploy.utils.observation_manager import SimpleObservationManager, TermCfg, 
 from deploy.utils.pinocchio_func import pin_mj
 from deploy.utils.urdf_graph import UrdfGraph
 from deploy.utils.motor_conf import *
+from deploy.utils.motion_loader import MotionLoader
+from deploy.utils.video_recorder import VideoRecorder
+from deploy.utils.math_func import *
 import onnxruntime as ort
 import numpy as np
 import time
@@ -163,7 +166,6 @@ class simulator:
         self.paused = False
         self._init_robot_conf()
         self._init_policy_conf()
-        self.data_queue = queue.Queue()
         self.change_id = 0
         self.video_recorder = VideoRecorder(
             path=current_path + "/deploy_mujoco/recordings",
@@ -175,49 +177,6 @@ class simulator:
         self.data_save = []
         self.obs_manager = SimpleObservationManager(ObsCfg(), self)
         to = self.obs_manager.compute_group("policy", update_history=True)
-        with open(
-            "/home/hpx/HPX_LOCO_2/whole_body_tracking/my_variable.pkl", "rb"
-        ) as f:
-            self.data_collection = pickle.load(f)
-            self.data_collection_index = 0
-
-    def motion_play_isaac_sim(self):
-        data = self.data_collection[self.data_collection_index]
-        self.data_collection_index += 1
-        if self.data_collection_index >= len(self.data_collection):
-            self.data_collection_index = 0
-        actor_obs = data["actor_obs"]
-        command = data["command"]
-        motion_ref_pos_b = data["motion_ref_pos_b"]
-        motion_ref_ori_b = data["motion_ref_ori_b"]
-        body_pos = data["body_pos"]
-        body_ori = data["body_ori"]
-        base_lin_vel = data["base_lin_vel"]
-        base_ang_vel = data["base_ang_vel"]
-        joint_pos = data["joint_pos"]
-        joint_vel = data["joint_vel"]
-        last_actions = data["last_actions"]
-        new_actions = data["new_actions"]
-
-        root_link_ang_vel_b = data["root_link_ang_vel_b"]
-        root_link_lin_vel_w = data["root_link_lin_vel_w"]
-        root_link_pos_w = data["root_link_pos_w"]
-        root_link_quat_w = data["root_link_quat_w"]
-        joint_pos_rel = data["joint_pos_rel"]
-        joint_vel_rel = data["joint_vel_rel"]
-        timesteps = np.array([data["timesteps"].astype(np.float32)])
-
-        self.d.qpos[0:3] = root_link_pos_w
-        self.d.qpos[3:7] = root_link_quat_w
-        self.d.qpos[7:] = joint_pos_rel[self.isaac_sim2mujoco_index]
-        self.d.qvel[0:3] = root_link_lin_vel_w
-        self.d.qvel[3:6] = root_link_ang_vel_b
-        self.d.qvel[6:] = joint_vel_rel[self.isaac_sim2mujoco_index]
-        mujoco.mj_forward(self.m, self.d)
-        self.update_obs(timesteps)
-        self.obs = actor_obs
-        self._policy_reasoning()
-        return timesteps
 
     def motion_play(self):
         self.d.qpos[0:3] = (
@@ -267,9 +226,6 @@ class simulator:
             )
         )
         self.prev_qpos = self.d.qpos
-        # plot_thread = threading.Thread(target=self.plot_data, args=(self.data_queue,))
-        # plot_thread.daemon = True
-        # plot_thread.start()
 
         first_flag = False
 
@@ -673,10 +629,7 @@ class simulator:
             self.policy_dt = 1 / self.motion.fps
         self.control_decimation = int(self.policy_dt / cfg.simulator_dt)
         print("control_decimation: ", self.control_decimation)
-        if cfg.policy_type == "torch":
-            self.policy = torch.jit.load(cfg.policy_path)
-        elif cfg.policy_type == "onnx":
-            self.policy = self.load_onnx_model(cfg.policy_path)
+        self.policy = self.load_onnx_model(cfg.policy_path)
 
         self.h2_action = np.zeros(cfg.action_num, dtype=np.float32)
         self.h_action = np.zeros(cfg.action_num, dtype=np.float32)
@@ -738,185 +691,6 @@ class simulator:
             body_lin_vel_w,
             body_ang_vel_w,
         )  # 默认返回第一个输出
-
-    def _rehandle_xml(self):
-
-        joints_to_remove, actuators_to_remove, _ = self._get_spec_modifications(
-            only_leg=cfg.only_leg_flag, with_wrist=cfg.with_wrist_flag
-        )
-        for actuator in self.spec.actuators:
-            if actuator.name in actuators_to_remove:
-                actuator.delete()
-        for joint in self.spec.joints:
-            if joint.name in joints_to_remove:
-                joint.delete()
-
-    def _get_spec_modifications(
-        self, only_leg, with_wrist
-    ) -> Tuple[List[str], List[str], List[str]]:
-        """
-        Specifies which joints, actuators, and equality constraints should be removed from the Mujoco specification.
-
-        Returns:
-            Tuple[List[str], List[str], List[str]]: A tuple containing lists of joints to remove, actuators to remove,
-            and equality constraints to remove.
-        """
-
-        joints_to_remove = [
-            # Left Hand
-            "L_thumb_proximal_yaw_joint",
-            "L_thumb_proximal_pitch_joint",
-            "L_thumb_intermediate_joint",
-            "L_thumb_distal_joint",
-            "L_index_proximal_joint",
-            "L_index_intermediate_joint",
-            "L_middle_proximal_joint",
-            "L_middle_intermediate_joint",
-            "L_ring_proximal_joint",
-            "L_ring_intermediate_joint",
-            "L_pinky_proximal_joint",
-            "L_pinky_intermediate_joint",
-            # Right Hand
-            "R_thumb_proximal_yaw_joint",
-            "R_thumb_proximal_pitch_joint",
-            "R_thumb_intermediate_joint",
-            "R_thumb_distal_joint",
-            "R_index_proximal_joint",
-            "R_index_intermediate_joint",
-            "R_middle_proximal_joint",
-            "R_middle_intermediate_joint",
-            "R_ring_proximal_joint",
-            "R_ring_intermediate_joint",
-            "R_pinky_proximal_joint",
-            "R_pinky_intermediate_joint",
-        ]
-
-        actuators_to_remove = [
-            # Left Hand
-            "L_thumb_proximal_yaw_joint",
-            "L_thumb_proximal_pitch_joint",
-            "L_thumb_intermediate_joint",
-            "L_thumb_distal_joint",
-            "L_index_proximal_joint",
-            "L_index_intermediate_joint",
-            "L_middle_proximal_joint",
-            "L_middle_intermediate_joint",
-            "L_ring_proximal_joint",
-            "L_ring_intermediate_joint",
-            "L_pinky_proximal_joint",
-            "L_pinky_intermediate_joint",
-            # Right Hand
-            "R_thumb_proximal_yaw_joint",
-            "R_thumb_proximal_pitch_joint",
-            "R_thumb_intermediate_joint",
-            "R_thumb_distal_joint",
-            "R_index_proximal_joint",
-            "R_index_intermediate_joint",
-            "R_middle_proximal_joint",
-            "R_middle_intermediate_joint",
-            "R_ring_proximal_joint",
-            "R_ring_intermediate_joint",
-            "R_pinky_proximal_joint",
-            "R_pinky_intermediate_joint",
-        ]
-        if not with_wrist:
-            joints_to_remove += [
-                "left_wrist_roll_joint",
-                "left_wrist_pitch_joint",
-                "left_wrist_yaw_joint",
-                "right_wrist_roll_joint",
-                "right_wrist_pitch_joint",
-                "right_wrist_yaw_joint",
-            ]
-            actuators_to_remove += [
-                "left_wrist_roll_joint",
-                "left_wrist_pitch_joint",
-                "left_wrist_yaw_joint",
-                "right_wrist_roll_joint",
-                "right_wrist_pitch_joint",
-                "right_wrist_yaw_joint",
-            ]
-        if only_leg:
-            joints_to_remove += [
-                # Left Arm
-                "left_shoulder_pitch_joint",
-                "left_shoulder_roll_joint",
-                "left_shoulder_yaw_joint",
-                "left_elbow_joint",
-                # Right Arm
-                "right_shoulder_pitch_joint",
-                "right_shoulder_roll_joint",
-                "right_shoulder_yaw_joint",
-                "right_elbow_joint",
-                "torso_joint",
-            ]
-            actuators_to_remove += [
-                # Left Arm
-                "left_shoulder_pitch_joint",
-                "left_shoulder_roll_joint",
-                "left_shoulder_yaw_joint",
-                "left_elbow_joint",
-                # Right Arm
-                "right_shoulder_pitch_joint",
-                "right_shoulder_roll_joint",
-                "right_shoulder_yaw_joint",
-                "right_elbow_joint",
-                "torso_joint",
-            ]
-
-        equ_constr_to_remove = []
-
-        return joints_to_remove, actuators_to_remove, equ_constr_to_remove
-
-    def plot_data(self, data_queue):
-        print("plot_data")
-        plt.ion()  # 开启交互模式
-        first_flag = 1
-
-        while True:
-            if not data_queue.empty():
-                merged_tensor = data_queue.get()
-                plot_num = merged_tensor.shape[0]
-                if first_flag:
-                    first_flag = 0
-                    # 计算行数和列数
-                    rows = math.floor(math.sqrt(plot_num))
-                    cols = math.ceil(plot_num / rows)
-
-                    fig, axs = plt.subplots(rows, cols, figsize=(10, 12))  # 创建子图
-                    axs = axs.flatten()  # 将二维数组展平成一维数组，方便索引
-
-                    lines = [ax.plot([], [])[0] for ax in axs]  # 初始化每个子图的线条
-                    xdata = [
-                        [0 for _ in range(700)] for _ in range(plot_num)
-                    ]  # 存储每个子图的 x 数据
-                    ydata = [
-                        [0] * 700 for _ in range(plot_num)
-                    ]  # 存储每个子图的 y 数据
-
-                    from matplotlib.widgets import Slider
-
-                    # Add slider
-                    ax_slider = plt.axes([0.15, 0.02, 0.65, 0.03])  # Slider position
-                    self.slider = Slider(
-                        ax_slider, "Control", 0.1, 3.0, valinit=1.0, valstep=0.001
-                    )
-                    self.slider.on_changed(self.update_sld)
-                for i in range(plot_num):
-                    xdata[i].append(len(xdata[i]))
-                    ydata[i].append(merged_tensor[i].item())
-                    lines[i].set_data(xdata[i][-100:], ydata[i][-100:])
-                    axs[i].relim()
-                    axs[i].autoscale_view()
-                # print(len(xdata[i]))
-                if len(xdata[i]) % 1 == 0:
-                    fig.canvas.draw()
-                    fig.canvas.flush_events()
-
-    def update_sld(self, val):
-        slider_value = self.slider.val  # Get slider value
-        self.D_gains[self.change_id] = slider_value * self.D_gains[self.change_id + 6]
-        print(f"D_gains {self.change_id:d} value: {self.D_gains[self.change_id]:.2f}")
 
     def init_vel_geom(self, input):
         # create an invisibale geom and add label on it
