@@ -1,161 +1,35 @@
-
-
-
-from deploy.utils.observation_manager import SimpleObservationManager, TermCfg, GroupCfg
 from deploy.utils.pinocchio_func import pin_mj
-from deploy.utils.urdf_graph import UrdfGraph
-from deploy.utils.motor_conf import *
-from deploy.utils.motion_loader import MotionLoader
 from deploy.utils.video_recorder import VideoRecorder
 from deploy.utils.math_func import *
-import onnxruntime as ort
+from deploy.utils.cfg import cfg,current_path
+from deploy.utils.infer import infere
+
 import numpy as np
 import time
 import os
-import matplotlib.pyplot as plt
-import copy
 
 import mujoco.viewer
 import mujoco
 
 
-
 np.set_printoptions(precision=16, linewidth=100, threshold=np.inf, suppress=True)
 
-class ObsCfg:
-    """观测总配置：每个属性是一个 GroupCfg 实例。"""
-
-    class PolicyCfg(GroupCfg):
-        motion_joint_pos_command = TermCfg()
-        motion_joint_vel_command = TermCfg()
-        motion_ref_ori_b = TermCfg()
-        # base_ang_vel = TermCfg(history_length=24)
-        # joint_pos = TermCfg(history_length=24)
-        # joint_vel = TermCfg(history_length=24)
-        base_ang_vel = TermCfg()
-        joint_pos = TermCfg()
-        joint_vel = TermCfg()
-        actions = TermCfg()
-
-    policy = PolicyCfg()
-
-current_path = os.getcwd()
-print(current_path)
-class cfg:
-    simulator_dt = 0.002
-    policy_dt = 0.02
-
-    policy_path = (
-        current_path
-        + "/"
-        + "deploy/policy/g1/2026-02-25_15-08-29_G1_slowly_walk"
-        + "/policy.onnx"
-    )
-    asset_path = current_path + "/deploy/assets/unitree_g1"
-    mjcf_path = asset_path + "/g1_29dof_rev_1_0.xml"
-    urdf_path = asset_path + "/g1_29dof_mode_15.urdf"
-    motion_file = (
-        current_path
-        + "/deploy/artifacts/g1/"
-        + "xsens_bvh/251203/01_slowly_forward_walk_120Hz.npz"
-    )
-    only_leg_flag = False  # True, False
-    with_wrist_flag = True  # True, False
-
-    ###################################################
-    # stiffness damping and joint maximum torqueparam #
-    ###################################################
-    leg_P_gains = [STIFFNESS_7520_14, STIFFNESS_7520_22, STIFFNESS_7520_14, STIFFNESS_7520_22, 2.0 * STIFFNESS_5020, 2.0 * STIFFNESS_5020] * 2
-    leg_D_gains = [DAMPING_7520_14, DAMPING_7520_22, DAMPING_7520_14, DAMPING_7520_22, 2.0 * DAMPING_5020, 2.0 * DAMPING_5020] * 2
-    leg_tq_max = [88.0, 139.0, 88.0, 139.0, 50.0, 50.0] * (2)
-
-    pelvis_P_gains = [STIFFNESS_7520_14, 2.0 * STIFFNESS_5020, 2.0 * STIFFNESS_5020]
-    pelvis_D_gains = [DAMPING_7520_14, 2.0 * DAMPING_5020, 2.0 * DAMPING_5020]
-    pelvis_tq_max = [88, 50, 50]
-
-    arm_P_gains = [STIFFNESS_5020, STIFFNESS_5020, STIFFNESS_5020, STIFFNESS_5020, STIFFNESS_5020, STIFFNESS_4010, STIFFNESS_4010] * (2)
-    arm_D_gains = [DAMPING_5020, DAMPING_5020, DAMPING_5020, DAMPING_5020, DAMPING_5020, DAMPING_4010, DAMPING_4010] * (2)
-    arm_tq_max = [25.0, 25.0, 25.0, 25.0, 25.0, 5.0, 5.0] * (2)
-
-    ########################
-    # joint maximum torque #
-    ########################
-
-    #####################
-    # joint default pos #
-    #####################
-    leg_default_pos = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] * (2)
-    pelvis_default_pos = [0.0] * (3)
-    arm_default_pos = [0.0] * (7*2)
-
-    ################
-    # action param #
-    ################
-    action_clip = 10.0
-    action_scale = 0.25
-
-    #############
-    # obs param #
-    #############
-    frame_stack = 1
-    num_single_obs = 154 #1557 154
-
-    ####################
-    # motion play mode #
-    ####################
-    """
-     if motion_play is true, robots in mujoco will set 
-     qpos and qvel through the retargeting dataset 
-    """
-    motion_play = False  # False, True
-
-    ###########################################
-    # Data conversion of isaac sim and mujoco #
-    ###########################################
-    urdf_graph = UrdfGraph(urdf_path)
-    isaac_sim_joint_name = urdf_graph.bfs_joint_order()
-
-    isaac_sim_link_name = urdf_graph.bfs_link_order() # env.unwrapped.scene["robot"].body_names
-
-    motion_body_names = [
-    "pelvis",
-
-    "left_hip_yaw_link",
-    "left_knee_link",
-    "left_ankle_roll_link",
-    "right_hip_yaw_link",
-    "right_knee_link",
-    "right_ankle_roll_link",
-
-    "torso_link",
-
-    "left_shoulder_yaw_link",
-    "left_elbow_link",
-    "left_wrist_yaw_link",
-    "right_shoulder_yaw_link",
-    "right_elbow_link",
-    "right_wrist_yaw_link",
-]
-
-    motion_reference_body = "torso_link"
-
-
-class simulator:
-    policy: ort.InferenceSession
+class simulator(infere):
 
     def __init__(self):
         # Load robot model
         self.spec = mujoco.MjSpec.from_file(cfg.mjcf_path)
         self.pin = pin_mj(cfg)
         self.m = mujoco.MjModel.from_xml_path(cfg.mjcf_path)
+        self.m.opt.timestep = cfg.simulator_dt
         self.d = mujoco.MjData(self.m)
         self._scene = mujoco.MjvScene(self.m, 100000)
         print(f"Number of actuators: {self.m.nu}")
 
-        self.m.opt.timestep = cfg.simulator_dt
-        self.paused = False
         self._init_robot_conf()
-        self._init_policy_conf()
+        super().__init__()
+        
+        self.paused = False
         self.change_id = 0
         self.video_recorder = VideoRecorder(
             path=current_path + "/deploy_mujoco_recordings",
@@ -165,8 +39,6 @@ class simulator:
             compress=False,
         )
         self.data_save = []
-        self.obs_manager = SimpleObservationManager(ObsCfg(), self)
-        to = self.obs_manager.compute_group("policy", update_history=True)
 
     def motion_play(self):
         t = int(self.time_step)
@@ -181,6 +53,18 @@ class simulator:
         )[self.isaac_sim2mujoco_index]
         mujoco.mj_forward(self.m, self.d)
         return
+
+    def _init_robot_conf(self):
+        super()._init_robot_conf()
+        self.mujoco_all_body_names = [
+            mujoco.mj_id2name(self.m, mujoco.mjtObj.mjOBJ_BODY, i)
+            for i in range(self.m.nbody)
+        ][1:]
+        self.mujoco_body_names_indices = [
+            mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_BODY, name)
+            for name in self.mujoco_all_body_names
+        ]
+        print("mujoco_all_body_names:\r\n", self.mujoco_all_body_names)
 
     def run(self):
         save_data_flag = 1
@@ -282,9 +166,9 @@ class simulator:
             "qfrc_actuator"
         ):
             log[k] = np.stack(log[k], axis=0)
-        np.savez(
-            current_path +"/tmp/motion.npz", **log
-        )
+        save_path = current_path + "/tmp/motion.npz"
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        np.savez(save_path, **log)
         print("stop")
         self.video_recorder.stop()
 
@@ -292,8 +176,6 @@ class simulator:
         # print("="*(20))
         self.counter += 1
         # print(self.d.qvel[0])
-        quat = self.d.qpos[3:7]
-        omega = self.d.qvel[3:6]
         self.qpos = self.d.qpos[7:]
         self.P_n = self.qpos - self.default_pos
         self.V_n = self.d.qvel[6:]
@@ -305,24 +187,7 @@ class simulator:
         if cfg.motion_play:
             self.motion_play()
         else:
-            self.update_obs(self.time_step)
-            self.h2_action = self.h_action.copy()
-            self.h_action = self.action.copy()
-            self._policy_reasoning()
-        action = (
-            np.clip(
-                copy.deepcopy(self.action[self.isaac_sim2mujoco_index]),
-                -self.action_clip,
-                self.action_clip,
-            )
-            * self.action_scale
-            * self.tq_max
-            / self.P_gains
-            + self.default_pos
-        )
-        target_q = action.clip(-self.action_clip, self.action_clip)
-        # print(target_q)
-        self.target_dof_pos = target_q  # + self.default_pos[: self.action_num]
+            self.minimum_infer()
         self.time_step += 1
         print(f"time_step: {self.time_step}")
         self.contact_force()
@@ -376,46 +241,12 @@ class simulator:
 
     def _obs_joint_pos(self):
         return (self.d.qpos[7:] - self.default_pos)[self.mujoco2isaac_sim_index]
-    
+
     def _obs_joint_vel(self):
         return self.d.qvel[6:][self.mujoco2isaac_sim_index]
-    
+
     def _obs_actions(self):
         return self.action
-    
-    def update_obs(self, time_step):
-        """
-        +----------------------------------------------------------+
-        | Active Observation Terms in Group: 'policy' (shape: (154,)) |
-        +------------+--------------------------------+------------+
-        |   Index    | Name                           |   Shape    |
-        +------------+--------------------------------+------------+
-        |     0      | command                        |   (58,)    |
-        |     1      | motion_ref_ori_b               |    (6,)    |
-        |     2      | base_ang_vel                   |    (3,)    |
-        |     3      | joint_pos                      |   (29,)    |
-        |     4      | joint_vel                      |   (29,)    |
-        |     5      | actions                        |   (29,)    |
-        +------------+--------------------------------+------------+
-        """
-        self.obs = np.clip(
-            self.obs_manager.compute_group("policy", update_history=True), -10, 10
-        )
-
-    def _policy_reasoning(self):
-
-        (
-            act,
-            self.r_joint_pos,
-            self.r_joint_vel,
-            self.r_body_pos_w,
-            self.r_body_quat_w,
-            self.r_body_lin_vel_w,
-            self.r_body_ang_vel_w,
-        ) = self.run_onnx_inference(
-            self.policy, self.obs.astype(np.float32), self.time_step
-        )
-        self.action[:] = act.copy()
 
     def sim_loop(self):
         for i in range(self.control_decimation):
@@ -498,141 +329,6 @@ class simulator:
         # self.viewer.cam.trackbodyid = 1
         ...
 
-    def _init_robot_conf(self):
-        self.default_pos = np.array(
-            cfg.leg_default_pos
-            + cfg.pelvis_default_pos
-            + cfg.arm_default_pos,
-            dtype=np.float32,
-        )  # [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        self.P_gains = np.array(
-            cfg.leg_P_gains + cfg.pelvis_P_gains + cfg.arm_P_gains,
-        )  # [70.0, 70.0, 3.0, 70.0, 70.0, 70.0, 1.5, 180.0, 180.0, 70.0, 70.0, 180.0, 180.0, 70.0, 70.0, 330.0, 330.0, 20.0, 20.0, 330.0, 330.0, 20.0, 20.0, 70.0, 70.0, 20.0, 20.0, 70.0, 70.0]
-        self.D_gains = np.array(
-            cfg.leg_D_gains + cfg.pelvis_D_gains + cfg.arm_D_gains,
-        )  # [1.5, 1.5, 0.6, 1.5, 1.5, 1.5, 0.3, 2.5, 2.5, 2.0, 2.0, 2.5, 2.5, 2.0, 2.0, 3.0, 3.0, 1.0, 1.0, 3.0, 3.0, 1.0, 1.0, 1.5, 1.5, 1.0, 1.0, 1.5, 1.5]
-        self.tq_max = np.array(
-            cfg.leg_tq_max + cfg.pelvis_tq_max + cfg.arm_tq_max,
-            dtype=np.float32,
-        )
-        self.P_n = np.zeros_like(self.default_pos)
-        self.V_n = np.zeros_like(self.default_pos)
-        self.cmd = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        mujoco_joint_name = [joint.name for joint in self.spec.joints][1:]
-        for i in range(len(mujoco_joint_name)):
-            print(
-                "  - "
-                + mujoco_joint_name[i]
-                + ": {kp: "
-                + str(self.P_gains[i])
-                + ", kd: "
-                + str(self.D_gains[i])
-                + ", torque_max: "
-                + str(self.tq_max[i])
-                + ", default_pos: "
-                + str(self.default_pos[i])
-                + "}"
-            )
-        print("mujoco_joint_name:\r\n", mujoco_joint_name)
-        self.isaac_sim2mujoco_index = [
-            cfg.isaac_sim_joint_name.index(name) for name in mujoco_joint_name
-        ]
-        print("isaac_sim2mujoco_index:\r\n", self.isaac_sim2mujoco_index)
-        self.mujoco2isaac_sim_index = [
-            mujoco_joint_name.index(name) for name in cfg.isaac_sim_joint_name
-        ]
-        print("mujoco2isaac_sim_index:\r\n", self.mujoco2isaac_sim_index)
-        self.mujoco_all_body_names = [
-            mujoco.mj_id2name(self.m, mujoco.mjtObj.mjOBJ_BODY, i)
-            for i in range(self.m.nbody)
-        ][1:]
-        self.mujoco_body_names_indices = [
-            mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_BODY, name)
-            for name in self.mujoco_all_body_names
-        ]
-        print("mujoco_all_body_names:\r\n", self.mujoco_all_body_names)
-        self.motion_body_names_in_isaacsim_index = [
-            cfg.isaac_sim_link_name.index(name) for name in cfg.motion_body_names
-        ]
-        print("motion_body_index:\r\n", self.motion_body_names_in_isaacsim_index)
-        a = 1
-
-    def _init_policy_conf(self):
-        self.body_indexes = np.asarray(
-            self.motion_body_names_in_isaacsim_index, dtype=np.int64
-        )
-        self.motion = MotionLoader(
-            cfg.motion_file,
-            self.body_indexes,
-            "cpu",
-        )
-        self.policy_dt = cfg.policy_dt
-        if cfg.motion_play:
-            self.policy_dt = (1 / self.motion.fps)[0]
-        else:
-            self.policy_dt = cfg.policy_dt
-        self.control_decimation = int(self.policy_dt / cfg.simulator_dt)
-        print("control_decimation: ", self.control_decimation)
-        self.policy = self.load_onnx_model(cfg.policy_path)
-        if hasattr(self.policy, "_outputs_meta"):
-            for (idx,meta) in enumerate(self.policy._outputs_meta):
-                if meta.name == "actions":
-                    self.action_num = meta.shape[1]
-        if hasattr(self.policy, "_inputs_meta"):
-            for (idx,meta) in enumerate(self.policy._inputs_meta):
-                if meta.name == "obs":
-                    self.obs_num = meta.shape[1]
-        self.h2_action = np.zeros(self.action_num, dtype=np.float32)
-        self.h_action = np.zeros(self.action_num, dtype=np.float32)
-        self.action = np.zeros(self.action_num, dtype=np.float32)
-        self.action_clip = cfg.action_clip
-
-        self.action_scale = cfg.action_scale
-        self.action_num = self.action_num
-        self.obs = np.zeros(self.obs_num * cfg.frame_stack, dtype=np.float32)
-        self.time_step = 1
-        self.single_obs = np.zeros(self.obs_num, dtype=np.float32)
-
-    def load_onnx_model(self, onnx_path, device="cpu"):
-        providers = (
-            ["CPUExecutionProvider"] if device == "cpu" else ["CUDAExecutionProvider"]
-        )
-        session = ort.InferenceSession(onnx_path, providers=providers)
-        return session
-
-    def run_onnx_inference(self, session, obs, time_step):
-        # 转换为numpy array并确保数据类型正确
-        obs = np.asarray(obs)
-        time_step = np.asarray(time_step, dtype=np.float32)
-        # 获取输入名称
-        obs_name = session.get_inputs()[0].name
-        time_step_name = session.get_inputs()[1].name
-        # 运行推理
-        (
-            actions,
-            joint_pos,
-            joint_vel,
-            body_pos_w,
-            body_quat_w,
-            body_lin_vel_w,
-            body_ang_vel_w,
-        ) = session.run(
-            None,
-            {
-                obs_name: obs.reshape(1, self.obs_num),
-                time_step_name: time_step.reshape(1, 1),
-            },
-        )
-        return (
-            actions,
-            joint_pos,
-            joint_vel,
-            body_pos_w,
-            body_quat_w,
-            body_lin_vel_w,
-            body_ang_vel_w,
-        )  # 默认返回第一个输出
-
     def init_vel_geom(self, input):
         # create an invisibale geom and add label on it
         geom = self.viewer.user_scn.geoms[self.viewer.user_scn.ngeom]
@@ -661,6 +357,7 @@ class simulator:
             self.cmd[2],
             self.fz,
         )
+
 
 if __name__ == "__main__":
     s = simulator()
