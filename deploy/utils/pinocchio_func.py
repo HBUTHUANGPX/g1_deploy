@@ -2,10 +2,14 @@ import pinocchio as pin
 from pinocchio.utils import zero
 from pinocchio.robot_wrapper import RobotWrapper
 """
- conda install pinocchio -c conda-forge
+conda install pinocchio -c conda-forge
 """
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
+"""
+export PYTHONPATH=""
+"""
 class pin_mj:
     def __init__(self, _cfg):
         # ========== 1. 准备Pinocchio模型 ==========

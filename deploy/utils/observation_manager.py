@@ -1,6 +1,5 @@
 import inspect
 import numpy as np
-import torch
 
 class SimpleObservationManager:
     """简化版 ObservationManager：从 cfg 解析观测组/项，支持 history/clip/scale/拼接。"""
@@ -126,13 +125,14 @@ class SimpleObservationManager:
             term_names = [t["name"] for t in self._group_terms[group_name]]
             print(f"[SimpleObservationManager] group='{group_name}', terms={term_names}")
 
-    def _to_tensor(self, obs):
-        # 统一为 torch.Tensor，便于后续处理（支持 numpy / list / 标量）
-        if torch.is_tensor(obs):
-            return obs
+    def _to_numpy(self, obs):
+        # 统一为 numpy.ndarray，便于后续处理（支持 numpy / list / 标量 / torch.Tensor）
         if isinstance(obs, np.ndarray):
-            return torch.from_numpy(obs)
-        return torch.as_tensor(obs)
+            return obs
+        # Support torch.Tensor without importing torch
+        if hasattr(obs, "detach") and hasattr(obs, "cpu") and hasattr(obs, "numpy"):
+            return obs.detach().cpu().numpy()
+        return np.asarray(obs)
 
     def compute_group(self, group_name, update_history=True):
         # 计算指定 group 的观测
@@ -147,22 +147,20 @@ class SimpleObservationManager:
                 obs = func(**params)
             else:
                 obs = func(self.env, **params)
-            obs = self._to_tensor(obs)
-            if obs.dim() == 1:
-                obs = obs.unsqueeze(0)
+            obs = self._to_numpy(obs)
+            if obs.ndim == 1:
+                obs = np.expand_dims(obs, axis=0)
 
             # 2) clip
             clip = term["clip"]
             if clip is not None:
-                obs = obs.clamp(min=clip[0], max=clip[1])
+                obs = np.clip(obs, clip[0], clip[1])
             # 3) scale（支持标量或向量）
             scale = term["scale"]
             if scale is not None:
-                scale_t = (
-                    scale
-                    if torch.is_tensor(scale)
-                    else torch.as_tensor(scale, dtype=obs.dtype, device=obs.device)
-                )
+                scale_t = scale
+                if not isinstance(scale, np.ndarray):
+                    scale_t = np.asarray(scale, dtype=obs.dtype)
                 obs = obs * scale_t
 
             # 4) history（按时间维堆叠，旧 -> 新）
@@ -170,12 +168,12 @@ class SimpleObservationManager:
                 hist = self._history[group_name][term["name"]]
                 # 首次使用：用第一帧填满整个历史
                 if hist["buffer"] is None:
-                    hist["buffer"] = [obs.clone() for _ in range(term["history_length"])]
+                    hist["buffer"] = [obs.copy() for _ in range(term["history_length"])]
                 # 后续调用：仅在 update_history=True 时滚动更新
                 elif update_history:
                     hist["buffer"].pop(0)
-                    hist["buffer"].append(obs.clone())
-                hist_tensor = torch.stack(hist["buffer"], dim=1)
+                    hist["buffer"].append(obs.copy())
+                hist_tensor = np.stack(hist["buffer"], axis=1)
                 if term["flatten_history_dim"]:
                     obs = hist_tensor.reshape(hist_tensor.shape[0], -1)
                 else:
@@ -186,7 +184,7 @@ class SimpleObservationManager:
 
         # 5) 按组配置决定拼接或返回 dict
         if self._group_concat[group_name]:
-            return torch.cat(group_obs, dim=self._group_concat_dim[group_name])
+            return np.concatenate(group_obs, axis=self._group_concat_dim[group_name])
         return {term["name"]: obs for term, obs in zip(self._group_terms[group_name], group_obs)}
 
 class TermCfg:
