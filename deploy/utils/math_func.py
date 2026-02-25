@@ -1,6 +1,6 @@
-import torch
-@torch.jit.script
-def matrix_from_quat(quaternions: torch.Tensor) -> torch.Tensor:
+import numpy as np
+
+def matrix_from_quat(quaternions: np.ndarray) -> np.ndarray:
     """Convert rotations given as quaternions to rotation matrices.
 
     Args:
@@ -12,11 +12,11 @@ def matrix_from_quat(quaternions: torch.Tensor) -> torch.Tensor:
     Reference:
         https://github.com/facebookresearch/pytorch3d/blob/main/pytorch3d/transforms/rotation_conversions.py#L41-L70
     """
-    r, i, j, k = torch.unbind(quaternions, -1)
+    r, i, j, k = np.moveaxis(quaternions, -1, 0)
     # pyre-fixme[58]: `/` is not supported for operand types `float` and `Tensor`.
-    two_s = 2.0 / (quaternions * quaternions).sum(-1)
+    two_s = 2.0 / np.sum(quaternions * quaternions, axis=-1)
 
-    o = torch.stack(
+    o = np.stack(
         (
             1 - two_s * (j * j + k * k),
             two_s * (i * j - k * r),
@@ -33,8 +33,7 @@ def matrix_from_quat(quaternions: torch.Tensor) -> torch.Tensor:
     return o.reshape(quaternions.shape[:-1] + (3, 3))
 
 
-@torch.jit.script
-def normalize(x: torch.Tensor, eps: float = 1e-9) -> torch.Tensor:
+def normalize(x: np.ndarray, eps: float = 1e-9) -> np.ndarray:
     """Normalizes a given input tensor to unit length.
 
     Args:
@@ -44,11 +43,12 @@ def normalize(x: torch.Tensor, eps: float = 1e-9) -> torch.Tensor:
     Returns:
         Normalized tensor of shape (N, dims).
     """
-    return x / x.norm(p=2, dim=-1).clamp(min=eps, max=None).unsqueeze(-1)
+    norms = np.linalg.norm(x, ord=2, axis=-1, keepdims=True)
+    norms = np.clip(norms, eps, None)
+    return x / norms
 
 
-@torch.jit.script
-def quat_conjugate(q: torch.Tensor) -> torch.Tensor:
+def quat_conjugate(q: np.ndarray) -> np.ndarray:
     """Computes the conjugate of a quaternion.
 
     Args:
@@ -59,11 +59,10 @@ def quat_conjugate(q: torch.Tensor) -> torch.Tensor:
     """
     shape = q.shape
     q = q.reshape(-1, 4)
-    return torch.cat((q[:, 0:1], -q[:, 1:]), dim=-1).view(shape)
+    return np.concatenate((q[:, 0:1], -q[:, 1:]), axis=-1).reshape(shape)
 
 
-@torch.jit.script
-def quat_inv(q: torch.Tensor) -> torch.Tensor:
+def quat_inv(q: np.ndarray) -> np.ndarray:
     """Compute the inverse of a quaternion.
 
     Args:
@@ -75,8 +74,7 @@ def quat_inv(q: torch.Tensor) -> torch.Tensor:
     return normalize(quat_conjugate(q))
 
 
-@torch.jit.script
-def quat_mul(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
+def quat_mul(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
     """Multiply two quaternions together.
 
     Args:
@@ -111,4 +109,4 @@ def quat_mul(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
     y = qq - yy + (w1 - x1) * (y2 + z2)
     z = qq - zz + (z1 + y1) * (w2 - x2)
 
-    return torch.stack([w, x, y, z], dim=-1).view(shape)
+    return np.stack([w, x, y, z], axis=-1).reshape(shape)

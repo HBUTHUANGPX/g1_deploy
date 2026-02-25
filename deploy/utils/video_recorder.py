@@ -68,8 +68,13 @@ class VideoRecorder(object):
                                              self._fps, (width, height))
 
     def stop(self):
-        cv2.destroyAllWindows()
-        self._video_writer.release()
+        try:
+            cv2.destroyAllWindows()
+        except cv2.error:
+            # Headless environments (no GUI support) will raise here.
+            pass
+        if self._video_writer is not None:
+            self._video_writer.release()
 
         # compress video
         if self._compress:

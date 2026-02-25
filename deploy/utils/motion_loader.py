@@ -58,7 +58,7 @@ class MotionLoader:
         self._body_quat_w = np.concatenate(body_quat_w_list, axis=0)
         self._body_lin_vel_w = np.concatenate(body_lin_vel_w_list, axis=0)
         self._body_ang_vel_w = np.concatenate(body_ang_vel_w_list, axis=0)
-
+        print("motion clips:")
         print("self.joint_pos.shape: ",self.joint_pos.shape)
         print("self.joint_vel.shape: ",self.joint_vel.shape)
         print("self._body_pos_w.shape: ",self._body_pos_w.shape)

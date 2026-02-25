@@ -48,7 +48,7 @@ class cfg:
     policy_path = (
         current_path
         + "/"
-        + "deploy/deploy_policy/g1/2026-02-25_15-08-29_G1_slowly_walk"
+        + "deploy/policy/g1/2026-02-25_15-08-29_G1_slowly_walk"
         + "/policy.onnx"
     )
     asset_path = current_path + "/deploy/assets/unitree_g1"
@@ -94,8 +94,6 @@ class cfg:
     action_clip = 10.0
     action_scale = 0.25
 
-    action_num = 29
-    print("action_num: ", action_num)
     #############
     # obs param #
     #############
@@ -110,12 +108,6 @@ class cfg:
      qpos and qvel through the retargeting dataset 
     """
     motion_play = False  # False, True
-    """
-    if motion_play is true and sim_motion_play is true,
-    robots in mujoco will set qpos and qvel through the 
-    dataset recorded in isaac sim
-    """
-    sim_motion_play = False  # False, True,
 
     ###########################################
     # Data conversion of isaac sim and mujoco #
@@ -154,9 +146,7 @@ class simulator:
     def __init__(self):
         # Load robot model
         self.spec = mujoco.MjSpec.from_file(cfg.mjcf_path)
-        # self._rehandle_xml()
-        # self.m = self.spec.compile()
-        self.pin = pin_mj(cfg.urdf_path)
+        self.pin = pin_mj(cfg)
         self.m = mujoco.MjModel.from_xml_path(cfg.mjcf_path)
         self.d = mujoco.MjData(self.m)
         self._scene = mujoco.MjvScene(self.m, 100000)
@@ -168,7 +158,7 @@ class simulator:
         self._init_policy_conf()
         self.change_id = 0
         self.video_recorder = VideoRecorder(
-            path=current_path + "/deploy_mujoco/recordings",
+            path=current_path + "/deploy_mujoco_recordings",
             tag=None,
             video_name="video_0",
             fps=int(1 / cfg.policy_dt),
@@ -179,36 +169,22 @@ class simulator:
         to = self.obs_manager.compute_group("policy", update_history=True)
 
     def motion_play(self):
-        self.d.qpos[0:3] = (
-            self.motion.body_pos_w[self.time_step, 7, :].detach().cpu().numpy()
+        t = int(self.time_step)
+        self.d.qpos[0:3] = np.asarray(
+            self.motion.body_pos_w[t, 7, :]
         )
-        q = self.motion.body_quat_w[self.time_step, 0, :].detach().cpu().numpy()[0, :]
-        # self.d.qpos[3:7] = np.array([0, 0, 0, 1], dtype=np.float32)
+        self.d.qpos[0:2] = 0
+        q = np.asarray(self.motion.body_quat_w[t, 0, :])
         self.d.qpos[3:7] = q
-        self.d.qpos[7 : 7 + len(self.default_pos)] = (
-            self.motion.joint_pos[self.time_step].detach().cpu().numpy()
-        )[:, self.isaac_sim2mujoco_index]
-        self.d.qvel[0:3] = 0 * (
-            self.motion.body_lin_vel_w[self.time_step, 0, :].detach().cpu().numpy()
-        )
-        self.d.qvel[3:6] = 0 * (
-            self.motion.body_ang_vel_w[self.time_step, 0, :].detach().cpu().numpy()
-        )
-        self.d.qvel[6 : 6 + len(self.default_pos)] = (
-            self.motion.joint_vel[self.time_step]
-            .detach()
-            .cpu()
-            .numpy()[:, self.isaac_sim2mujoco_index]
-        )
+        self.d.qpos[7 : 7 + len(self.default_pos)] = np.asarray(
+            self.motion.joint_pos[t]
+        )[self.isaac_sim2mujoco_index]
         mujoco.mj_forward(self.m, self.d)
         return
 
     def run(self):
         save_data_flag = 1
         self.counter = 0
-        self.d.qpos[7 : 7 + len(self.default_pos)] = self.default_pos
-        self.d.qpos[2] = 0.992
-        mujoco.mj_forward(self.m, self.d)
         self.target_dof_pos = self.default_pos.copy()[: self.action_num]
         self.phase = 0
         # self.viewer = mujoco_viewer.MujocoViewer(self.m, self.d)
@@ -256,11 +232,9 @@ class simulator:
                 first_flag = True
                 if cfg.motion_play:
                     self.motion_play()
-                    self.time_step *= 0
-                    if cfg.sim_motion_play:
-                        self.time_step[:] = self.motion_play_isaac_sim() * 1.0
+                    self.time_step = 0
                 else:
-                    # self.motion_play()
+                    self.motion_play()
                     ...
                 mujoco.mj_step(self.m, self.d)
                 self.viewer.sync()
@@ -309,10 +283,8 @@ class simulator:
         ):
             log[k] = np.stack(log[k], axis=0)
         np.savez(
-            "/home/hpx/HPX_LOCO_2/mimic_baseline/deploy_mujoco/motion.npz", **log
+            current_path +"/tmp/motion.npz", **log
         )
-        # with open("data_save.pkl", "wb") as f:
-        #     pickle.dump(self.data_save, f)
         print("stop")
         self.video_recorder.stop()
 
@@ -331,17 +303,12 @@ class simulator:
             self.time_step = 10
 
         if cfg.motion_play:
-            if cfg.sim_motion_play:
-                self.time_step[:] = self.motion_play_isaac_sim() * 1.0
-            else:
-                self.motion_play()
+            self.motion_play()
         else:
-            # self.update_obs(self.time_step*0)
             self.update_obs(self.time_step)
             self.h2_action = self.h_action.copy()
             self.h_action = self.action.copy()
             self._policy_reasoning()
-            # print(self.motion.joint_pos[self.time_step],"\r\n",self.r_joint_pos)
         action = (
             np.clip(
                 copy.deepcopy(self.action[self.isaac_sim2mujoco_index]),
@@ -353,21 +320,13 @@ class simulator:
             / self.P_gains
             + self.default_pos
         )
-        # print(self.action_scale
-        #     * self.tq_max
-        #     / self.P_gains)
-        # {'.*_hip_roll_joint': 0.125, '.*_hip_yaw_joint': 0.08333333333333333, '.*_hip_pitch_joint': 0.25, '.*_knee_joint': 0.25, '.*_ankle_pitch_joint': 0.12857142857142856, '.*_ankle_roll_joint': 0.12857142857142856, 'pelvis_joint': 0.13291139240506328, 'head_yaw_joint': 0.21, 'head_pitch_joint': 0.21, '.*_shoulder_pitch_joint': 0.15, '.*_shoulder_roll_joint': 0.15, '.*_shoulder_yaw_joint': 0.08214285714285714, '.*_elbow_joint': 0.08214285714285714, '.*_forearm_yaw_joint': 0.10375000000000001, '.*_wrist_roll_joint': 0.041249999999999995, '.*_wrist_yaw_joint': 0.041249999999999995}
         target_q = action.clip(-self.action_clip, self.action_clip)
         # print(target_q)
         self.target_dof_pos = target_q  # + self.default_pos[: self.action_num]
         self.time_step += 1
         print(f"time_step: {self.time_step}")
-        # self.time_step *= 0
         self.contact_force()
         self.sim_loop()
-        # mujoco.mjr_render(self._viewport, self._scene, self._context)
-        # im = self.read_pixels()
-        # self.video_recorder(im)
         # 更新 Renderer 场景，使用查看器的相机和选项，使图像与窗口一致
         self.renderer.update_scene(
             self.d,
@@ -383,10 +342,10 @@ class simulator:
         self.update_vel_geom()
 
     def _obs_motion_joint_pos_command(self):
-        return np.copy(self.motion.joint_pos[self.time_step])
+        return np.copy(self.motion.joint_pos[int(self.time_step)])
 
     def _obs_motion_joint_vel_command(self):
-        return np.copy(self.motion.joint_vel[self.time_step])
+        return np.copy(self.motion.joint_vel[int(self.time_step)])
 
     def _obs_motion_ref_ori_b(self):
         self.pin.mujoco_to_pinocchio(
@@ -395,12 +354,14 @@ class simulator:
             base_quat=self.d.qpos[3:7][[1, 2, 3, 0]],
         )
         _quat = self.pin.get_link_quaternion(cfg.motion_reference_body)
-        self.robot_ref_quat_w = torch.from_numpy(_quat).unsqueeze(0)  # shape [n,4]
+        self.robot_ref_quat_w = np.expand_dims(_quat, axis=0)  # shape [n,4]
         self.ref_quat_w = self.motion.body_quat_w[
-            self.time_step, cfg.motion_body_names.index(cfg.motion_reference_body), :
+            int(self.time_step), cfg.motion_body_names.index(cfg.motion_reference_body), :
         ]  # shape [n,4]
         q01 = self.robot_ref_quat_w
         q02 = self.ref_quat_w
+        if q02 is not None and q02.ndim == 1:
+            q02 = np.expand_dims(q02, axis=0)
         q10 = quat_inv(q01)
         if q02 is not None:
             q12 = quat_mul(q10, q02)
@@ -437,48 +398,37 @@ class simulator:
         |     5      | actions                        |   (29,)    |
         +------------+--------------------------------+------------+
         """
-        self.obs = self.obs_manager.compute_group("policy", update_history=True).clamp(-10, 10).numpy()
+        self.obs = np.clip(
+            self.obs_manager.compute_group("policy", update_history=True), -10, 10
+        )
 
     def _policy_reasoning(self):
 
-        if cfg.policy_type == "onnx":
-            (
-                act,
-                self.r_joint_pos,
-                self.r_joint_vel,
-                self.r_body_pos_w,
-                self.r_body_quat_w,
-                self.r_body_lin_vel_w,
-                self.r_body_ang_vel_w,
-            ) = self.run_onnx_inference(
-                self.policy, self.obs.astype(np.float32), self.time_step
-            )
-        # print(act.shape)
-        # print(self.r_joint_pos.shape)
-        # print(self.r_joint_vel.shape)
-        # print(self.r_body_pos_w.shape)
-        # print(self.r_body_quat_w.shape)
-        # print(self.r_body_lin_vel_w.shape)
-        # print(self.r_body_ang_vel_w.shape)
+        (
+            act,
+            self.r_joint_pos,
+            self.r_joint_vel,
+            self.r_body_pos_w,
+            self.r_body_quat_w,
+            self.r_body_lin_vel_w,
+            self.r_body_ang_vel_w,
+        ) = self.run_onnx_inference(
+            self.policy, self.obs.astype(np.float32), self.time_step
+        )
         self.action[:] = act.copy()
 
     def sim_loop(self):
         for i in range(self.control_decimation):
             step_start = time.time()
 
-            if not cfg.motion_play or (cfg.motion_play and cfg.sim_motion_play):
+            if not cfg.motion_play:
                 # tau = self._PD_control()
                 tau = self._PD_control(self.target_dof_pos)
                 self.d.ctrl[:] = tau
             if not self.paused:
                 self.prev_qpos = self.d.qpos.copy()
                 self.set_camera()
-                # self.d.qpos[0:3] = np.array([0,0,1])
-                # self.d.qpos[3:7] = np.array([0,0,0,1])
-                # self.d.qvel[0:3] = 0
-                # self.d.qvel[3:6] = 0
                 mujoco.mj_step(self.m, self.d)
-                # self.viewer.sync()
             time_until_next_step = self.m.opt.timestep - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
@@ -486,15 +436,11 @@ class simulator:
     def _PD_control(self, _P_t=0):
         P_n = self.d.qpos[7:]
         V_n = self.d.qvel[6:]
-        # print(f"P_n:{P_n}")
         KP = self.P_gains
         KD = self.D_gains
         # 在_compute_torques中使用
         t = KP * (_P_t - P_n) - KD * V_n
         # t = KP * (_P_t - P_n) - KD * V_n
-        # print(f"KP * (_P_t - P_n):\r\n{KP * (_P_t - P_n)}")
-        # print(f" - KD * V_n: \r\n{ - KD * V_n}")
-        # print(f"t: \r\n{t}")
         return t
 
     def contact_force(self):
@@ -503,10 +449,8 @@ class simulator:
             if contact.efc_address >= 0:  # Valid contact
                 forcetorque = np.zeros(6)
                 mujoco.mj_contactForce(self.m, self.d, contact_id, forcetorque)
-                # print("forcetorque: ",forcetorque)
                 force += forcetorque[0]
         self.fz = force / 65 / 9.81
-        # print("force: %8.3f"% force)
 
     def key_callback(self, keycode):
         # 按空格键切换暂停/继续
@@ -614,10 +558,8 @@ class simulator:
         a = 1
 
     def _init_policy_conf(self):
-        self.body_indexes = torch.tensor(
-            self.motion_body_names_in_isaacsim_index,
-            dtype=torch.long,
-            device="cpu",
+        self.body_indexes = np.asarray(
+            self.motion_body_names_in_isaacsim_index, dtype=np.int64
         )
         self.motion = MotionLoader(
             cfg.motion_file,
@@ -626,21 +568,30 @@ class simulator:
         )
         self.policy_dt = cfg.policy_dt
         if cfg.motion_play:
-            self.policy_dt = 1 / self.motion.fps
+            self.policy_dt = (1 / self.motion.fps)[0]
+        else:
+            self.policy_dt = cfg.policy_dt
         self.control_decimation = int(self.policy_dt / cfg.simulator_dt)
         print("control_decimation: ", self.control_decimation)
         self.policy = self.load_onnx_model(cfg.policy_path)
-
-        self.h2_action = np.zeros(cfg.action_num, dtype=np.float32)
-        self.h_action = np.zeros(cfg.action_num, dtype=np.float32)
-        self.action = np.zeros(cfg.action_num, dtype=np.float32)
+        if hasattr(self.policy, "_outputs_meta"):
+            for (idx,meta) in enumerate(self.policy._outputs_meta):
+                if meta.name == "actions":
+                    self.action_num = meta.shape[1]
+        if hasattr(self.policy, "_inputs_meta"):
+            for (idx,meta) in enumerate(self.policy._inputs_meta):
+                if meta.name == "obs":
+                    self.obs_num = meta.shape[1]
+        self.h2_action = np.zeros(self.action_num, dtype=np.float32)
+        self.h_action = np.zeros(self.action_num, dtype=np.float32)
+        self.action = np.zeros(self.action_num, dtype=np.float32)
         self.action_clip = cfg.action_clip
 
         self.action_scale = cfg.action_scale
-        self.action_num = cfg.action_num
-        self.obs = np.zeros(cfg.num_single_obs * cfg.frame_stack, dtype=np.float32)
-        self.time_step = np.ones(1, dtype=np.float32) * 1
-        self.single_obs = np.zeros(cfg.num_single_obs, dtype=np.float32)
+        self.action_num = self.action_num
+        self.obs = np.zeros(self.obs_num * cfg.frame_stack, dtype=np.float32)
+        self.time_step = 1
+        self.single_obs = np.zeros(self.obs_num, dtype=np.float32)
 
     def load_onnx_model(self, onnx_path, device="cpu"):
         providers = (
@@ -651,10 +602,8 @@ class simulator:
 
     def run_onnx_inference(self, session, obs, time_step):
         # 转换为numpy array并确保数据类型正确
-        if isinstance(obs, torch.Tensor):
-            obs = obs.detach().cpu().numpy()
-        if isinstance(time_step, torch.Tensor):
-            time_step = time_step.detach().cpu().numpy()
+        obs = np.asarray(obs)
+        time_step = np.asarray(time_step, dtype=np.float32)
         # 获取输入名称
         obs_name = session.get_inputs()[0].name
         time_step_name = session.get_inputs()[1].name
@@ -670,18 +619,10 @@ class simulator:
         ) = session.run(
             None,
             {
-                obs_name: obs.reshape(1, cfg.num_single_obs),
+                obs_name: obs.reshape(1, self.obs_num),
                 time_step_name: time_step.reshape(1, 1),
             },
         )
-        # print("outputs shape")
-        # print(actions.shape)
-        # print(joint_pos.shape)
-        # print(joint_vel.shape)
-        # print(body_pos_w.shape)
-        # print(body_quat_w.shape)
-        # print(body_lin_vel_w.shape)
-        # print(body_ang_vel_w.shape)
         return (
             actions,
             joint_pos,
@@ -714,10 +655,13 @@ class simulator:
         geom = self.viewer.user_scn.geoms[self.viewer.user_scn.ngeom - 1]
         geom.pos = self.d.qpos[:3] + np.array([0.0, 0.0, 1.0])
         geom.label = "rb h{:.2f} \r\nGoal Vel: x: {:.2f}, y: {:.2f}, yaw: {:.2f},force_z: {:.2f}".format(
-            # self.data["robot.data.body_pos_w"].detach().cpu().numpy()[0][2],
             0.0,
             self.cmd[0],
             self.cmd[1],
             self.cmd[2],
             self.fz,
         )
+
+if __name__ == "__main__":
+    s = simulator()
+    s.run()
