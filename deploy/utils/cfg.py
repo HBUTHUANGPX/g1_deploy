@@ -10,7 +10,7 @@ class cfg:
     policy_path = (
         current_path
         + "/"
-        + "deploy/policy/g1/2026-02-25_15-08-29_G1_slowly_walk"
+        + "deploy/policy/g1/2026-02-26_09-56-10_G1_slowly_walk"
         + "/policy.onnx"
     )
     asset_path = current_path + "/deploy/assets/unitree_g1"

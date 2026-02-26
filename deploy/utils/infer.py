@@ -181,7 +181,7 @@ class infere:
         self._policy_reasoning()
         self.post_action()
         self.time_step+=1
-        self.time_step=0
+        # self.time_step=0
 
     def update_obs(self):
         """
