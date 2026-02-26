@@ -2,6 +2,7 @@ from deploy.utils.observation_manager import SimpleObservationManager, TermCfg, 
 from deploy.utils.motion_loader import MotionLoader
 from deploy.utils.obscfg import ObsCfg
 from deploy.utils.cfg import cfg,current_path
+from deploy.utils.pinocchio_func import pin_mj
 import copy
 import onnxruntime as ort
 import numpy as np
@@ -9,8 +10,10 @@ import numpy as np
 class infere:
     policy: ort.InferenceSession
     def __init__(self):
+        print("==infere init==")
         self._init_robot_conf()
         self._init_policy_conf()
+        self.pin = pin_mj(cfg)
         self.obs_manager = SimpleObservationManager(ObsCfg(), self)
 
     def _init_policy_conf(self):
@@ -177,6 +180,8 @@ class infere:
         self.h_action = self.action.copy()
         self._policy_reasoning()
         self.post_action()
+        self.time_step+=1
+        self.time_step=0
 
     def update_obs(self):
         """

@@ -45,10 +45,12 @@ np.set_printoptions(precision=16, linewidth=100, threshold=np.inf, suppress=True
 
 class mini_g1_real:
     def __init__(self, config: Config):
+        print("==mini_g1_real init==")
         self.config = config
         self.remote_controller = RemoteController()
-        self.qj = np.zeros(config.num_actions, dtype=np.float32)
-        self.dqj = np.zeros(config.num_actions, dtype=np.float32)
+        self.motor_idx = self.config.leg_joint2motor_idx + self.config.arm_waist_joint2motor_idx
+        self.qj = np.zeros(len(self.motor_idx), dtype=np.float32)
+        self.dqj = np.zeros(len(self.motor_idx), dtype=np.float32)
         self.target_dof_pos = None
         self.counter = 0
 
@@ -178,18 +180,19 @@ class mini_g1_real:
 
     def perpare_data(self):
         # Get the current joint position and velocity
-        for i in range(len(self.config.leg_joint2motor_idx)):
+        
+        for i in range(len(self.motor_idx)):
             self.qj[i] = self.low_state.motor_state[
-                self.config.leg_joint2motor_idx[i]
+                self.motor_idx[i]
             ].q
             self.dqj[i] = self.low_state.motor_state[
-                self.config.leg_joint2motor_idx[i]
+                self.motor_idx[i]
             ].dq
 
         # imu_state quaternion: w, x, y, z
-        self.quat = self.low_state.imu_state.quaternion
+        self.quat = np.array([1,0,0,0],dtype=np.float32)
+        # self.quat = np.array(self.low_state.imu_state.quaternion,dtype=np.float32)
         self.ang_vel = np.array([self.low_state.imu_state.gyroscope], dtype=np.float32)
-
         if self.config.imu_type == "torso":
             # h1 and h1_2 imu is on the torso
             # imu data needs to be transformed to the pelvis frame
@@ -244,56 +247,76 @@ class mini_g1_real:
         self.update_cmd(self.target_dof_pos)
         time.sleep(self.config.control_dt)
 
-        # def _obs_motion_joint_pos_command(self):
-        #     return np.copy(self.motion.joint_pos[int(self.time_step)])
+class real(infere, mini_g1_real):
+    def __init__(self, config: Config):
+        super().__init__()
+        super(infere,self).__init__(config)
 
-        # def _obs_motion_joint_vel_command(self):
-        #     return np.copy(self.motion.joint_vel[int(self.time_step)])
+    def run(self):
+        self.counter += 1
+        self.perpare_data()
+        # =========================
+        #         infer
+        # =========================
+        self.minimum_infer()
+        
+        if self.time_step >= self.motion.time_step_total:
+            self.time_step = 1
+        # send the command
+        self.update_cmd(self.target_dof_pos,kps = self.P_gains,kds = self.D_gains)
+        time.sleep(self.config.control_dt)
 
-        # def _obs_motion_ref_ori_b(self):
-        #     self.pin.mujoco_to_pinocchio(
-        #         self.d.qpos[7:],
-        #         base_pos=self.d.qpos[0:3],
-        #         base_quat=self.d.qpos[3:7][[1, 2, 3, 0]],
-        #     )
-        #     _quat = self.pin.get_link_quaternion(cfg.motion_reference_body)
-        #     self.robot_ref_quat_w = np.expand_dims(_quat, axis=0)  # shape [n,4]
-        #     self.ref_quat_w = self.motion.body_quat_w[
-        #         int(self.time_step), cfg.motion_body_names.index(cfg.motion_reference_body), :
-        #     ]  # shape [n,4]
-        #     q01 = self.robot_ref_quat_w
-        #     q02 = self.ref_quat_w
-        #     if q02 is not None and q02.ndim == 1:
-        #         q02 = np.expand_dims(q02, axis=0)
-        #     q10 = quat_inv(q01)
-        #     if q02 is not None:
-        #         q12 = quat_mul(q10, q02)
-        #     else:
-        #         q12 = q10
-        #     mat = matrix_from_quat(q12)
-        #     motion_ref_ori_b = mat[..., :2].reshape(mat.shape[0], -1)  # shape [n,6]
-        #     return motion_ref_ori_b
+    def _obs_motion_joint_pos_command(self):
+        return np.copy(self.motion.joint_pos[int(self.time_step)])
 
-        # def _obs_base_ang_vel(self):
-        #     return self.d.qvel[3:6]
+    def _obs_motion_joint_vel_command(self):
+        return np.copy(self.motion.joint_vel[int(self.time_step)])
 
-        # def _obs_joint_pos(self):
-        #     return (self.d.qpos[7:] - self.default_pos)[self.mujoco2isaac_sim_index]
+    def _obs_motion_ref_ori_b(self):
+        self.pin.mujoco_to_pinocchio(
+            self.qj,
+            base_pos=np.array([0,0,0],dtype=np.float32),
+            base_quat=self.quat[[1, 2, 3, 0]],
+        )
+        _quat = self.pin.get_link_quaternion(cfg.motion_reference_body)
+        self.robot_ref_quat_w = np.expand_dims(_quat, axis=0)  # shape [n,4]
+        self.ref_quat_w = self.motion.body_quat_w[
+            int(self.time_step), cfg.motion_body_names.index(cfg.motion_reference_body), :
+        ]  # shape [n,4]
+        q01 = self.robot_ref_quat_w
+        q02 = self.ref_quat_w
+        if q02 is not None and q02.ndim == 1:
+            q02 = np.expand_dims(q02, axis=0)
+        q10 = quat_inv(q01)
+        if q02 is not None:
+            q12 = quat_mul(q10, q02)
+        else:
+            q12 = q10
+        mat = matrix_from_quat(q12)
+        motion_ref_ori_b = mat[..., :2].reshape(mat.shape[0], -1)  # shape [n,6]
+        return motion_ref_ori_b
 
-        # def _obs_joint_vel(self):
-        #     return self.d.qvel[6:][self.mujoco2isaac_sim_index]
+    def _obs_base_ang_vel(self):
+        return self.ang_vel * 0
 
-        # def _obs_actions(self):
+    def _obs_joint_pos(self):
+        return (self.qj - self.default_pos)[self.mujoco2isaac_sim_index]
+
+    def _obs_joint_vel(self):
+        return self.dqj[self.mujoco2isaac_sim_index] * 0
+
+    def _obs_actions(self):
         return self.action
-
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("net", type=str, default="g1.yaml", help="network interface")
     parser.add_argument(
-        "config",
+        "--net", 
+        type=str, default="eth0", help="network interface")
+    parser.add_argument(
+        "--config",
         type=str,
         help="config file name in the configs folder",
         default="g1.yaml",
@@ -301,13 +324,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Load config
-    config_path = f"../deploy/deploy_real/configs/{args.config}"
+    config_path = current_path + f"/deploy/deploy_real/configs/{args.config}"
     config = Config(config_path)
 
     # Initialize DDS communication
     ChannelFactoryInitialize(0, args.net)
 
-    controller = mini_g1_real(config)
+    controller = real(config)
 
     # Enter the zero torque state, press the start key to continue executing
     controller.zero_torque_state()

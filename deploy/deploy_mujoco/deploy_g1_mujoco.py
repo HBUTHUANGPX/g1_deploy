@@ -1,4 +1,3 @@
-from deploy.utils.pinocchio_func import pin_mj
 from deploy.utils.video_recorder import VideoRecorder
 from deploy.utils.math_func import *
 from deploy.utils.cfg import cfg,current_path
@@ -19,7 +18,6 @@ class simulator(infere):
     def __init__(self):
         # Load robot model
         self.spec = mujoco.MjSpec.from_file(cfg.mjcf_path)
-        self.pin = pin_mj(cfg)
         self.m = mujoco.MjModel.from_xml_path(cfg.mjcf_path)
         self.m.opt.timestep = cfg.simulator_dt
         self.d = mujoco.MjData(self.m)
@@ -188,7 +186,6 @@ class simulator(infere):
             self.motion_play()
         else:
             self.minimum_infer()
-        self.time_step += 1
         # print(f"time_step: {self.time_step}")
         self.contact_force()
         self.sim_loop()
