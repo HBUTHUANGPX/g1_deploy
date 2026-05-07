@@ -56,6 +56,11 @@ class simulator(infere):
 
         self.paused = False
         self.change_id = 0
+        self.show_human_skeleton = True
+        self.show_human_skeleton_axes = False
+        self.human_parent_indices = self._load_human_parent_indices()
+        self.vel_geom_id = None
+        self._persistent_user_geom_count = 0
         self.video_recorder = VideoRecorder(
             path=current_path + "/deploy_mujoco_recordings",
             tag=None,
@@ -64,6 +69,162 @@ class simulator(infere):
             compress=False,
         )
         self.data_save = []
+
+    def _load_human_parent_indices(self):
+        motion_files = getattr(self.motion, "motion_file", None)
+        if not motion_files:
+            return self._fallback_human_parent_indices()
+
+        with np.load(motion_files[0], allow_pickle=True) as data:
+            if "human_parent_indices" not in data or "human_joint_names" not in data:
+                return self._fallback_human_parent_indices()
+            human_joint_names = data["human_joint_names"].tolist()
+            source_parent_indices = np.asarray(
+                data["human_parent_indices"], dtype=np.int32
+            )
+        desired_names = cfg.desire_human_joint_names
+        desired_name_set = set(desired_names)
+        desired_parent_indices = np.full(len(desired_names), -1, dtype=np.int32)
+
+        for desired_idx, name in enumerate(desired_names):
+            source_idx = human_joint_names.index(name)
+            parent_idx = int(source_parent_indices[source_idx])
+            while parent_idx >= 0:
+                parent_name = human_joint_names[parent_idx]
+                if parent_name in desired_name_set:
+                    desired_parent_indices[desired_idx] = desired_names.index(parent_name)
+                    break
+                parent_idx = int(source_parent_indices[parent_idx])
+        return desired_parent_indices
+
+    def _fallback_human_parent_indices(self):
+        parent_by_name = {
+            "Hips": -1,
+            "Spine1": "Hips",
+            "Spine2": "Spine1",
+            "Chest": "Spine2",
+            "Neck1": "Chest",
+            "Neck2": "Neck1",
+            "Head": "Neck2",
+            "HeadEnd": "Head",
+            "LeftShoulder": "Chest",
+            "LeftArm": "LeftShoulder",
+            "LeftForeArm": "LeftArm",
+            "LeftHand": "LeftForeArm",
+            "RightShoulder": "Chest",
+            "RightArm": "RightShoulder",
+            "RightForeArm": "RightArm",
+            "RightHand": "RightForeArm",
+            "LeftLeg": "Hips",
+            "LeftShin": "LeftLeg",
+            "LeftFoot": "LeftShin",
+            "LeftToeBase": "LeftFoot",
+            "LeftToeEnd": "LeftToeBase",
+            "RightLeg": "Hips",
+            "RightShin": "RightLeg",
+            "RightFoot": "RightShin",
+            "RightToeBase": "RightFoot",
+            "RightToeEnd": "RightToeBase",
+        }
+        parent_indices = np.full(len(cfg.desire_human_joint_names), -1, dtype=np.int32)
+        for idx, name in enumerate(cfg.desire_human_joint_names):
+            parent_name = parent_by_name.get(name, -1)
+            if parent_name != -1 and parent_name in cfg.desire_human_joint_names:
+                parent_indices[idx] = cfg.desire_human_joint_names.index(parent_name)
+        return parent_indices
+
+    def draw_sphere(self, scene, position, radius, rgba):
+        if scene.ngeom >= scene.maxgeom:
+            return
+        geom = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            geom,
+            type=mujoco.mjtGeom.mjGEOM_SPHERE,
+            size=np.array([radius, 0.0, 0.0], dtype=np.float64),
+            pos=np.asarray(position, dtype=np.float64),
+            mat=np.eye(3, dtype=np.float64).reshape(-1),
+            rgba=np.asarray(rgba, dtype=np.float32),
+        )
+        scene.ngeom += 1
+
+    def draw_line(self, scene, start, end, width, rgba):
+        if scene.ngeom >= scene.maxgeom:
+            return
+        geom = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            geom,
+            type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+            size=np.zeros(3, dtype=np.float64),
+            pos=np.zeros(3, dtype=np.float64),
+            mat=np.eye(3, dtype=np.float64).reshape(-1),
+            rgba=np.asarray(rgba, dtype=np.float32),
+        )
+        mujoco.mjv_connector(
+            geom,
+            type=mujoco.mjtGeom.mjGEOM_CAPSULE,
+            width=width,
+            from_=np.asarray(start, dtype=np.float64),
+            to=np.asarray(end, dtype=np.float64),
+        )
+        scene.ngeom += 1
+
+    def draw_axes(self, scene, position, rotation, axis_length=0.06, axis_width=0.003):
+        rot_mat = matrix_from_quat(np.asarray(rotation, dtype=np.float64))
+        colors = (
+            np.array([1.0, 0.0, 0.0, 1.0], dtype=np.float32),
+            np.array([0.0, 1.0, 0.0, 1.0], dtype=np.float32),
+            np.array([0.0, 0.0, 1.0, 1.0], dtype=np.float32),
+        )
+        for axis_idx, color in enumerate(colors):
+            self.draw_line(
+                scene,
+                position,
+                position + rot_mat[:, axis_idx] * axis_length,
+                axis_width,
+                color,
+            )
+
+    def draw_human_skeleton(
+        self,
+        positions,
+        rotations=None,
+        parent_indices=None,
+        show_axes=False,
+        joint_radius=0.025,
+        bone_width=0.008,
+    ):
+        scene = self.viewer.user_scn
+        scene.ngeom = self._persistent_user_geom_count
+        parent_indices = (
+            self.human_parent_indices if parent_indices is None else parent_indices
+        )
+        joint_rgba = np.array([1.0, 0.8, 0.1, 0.9], dtype=np.float32)
+        bone_rgba = np.array([0.3, 0.9, 1.0, 0.7], dtype=np.float32)
+
+        for joint_idx, position in enumerate(np.asarray(positions)):
+            if scene.ngeom >= scene.maxgeom:
+                break
+            self.draw_sphere(scene, position, joint_radius, joint_rgba)
+            parent_idx = int(parent_indices[joint_idx])
+            if parent_idx >= 0:
+                self.draw_line(
+                    scene, positions[parent_idx], position, bone_width, bone_rgba
+                )
+            if show_axes and rotations is not None and scene.ngeom + 3 < scene.maxgeom:
+                self.draw_axes(scene, position, rotations[joint_idx])
+
+    def draw_current_human_skeleton(self):
+        if not self.show_human_skeleton or not hasattr(self.motion, "human_body_pos_w"):
+            return
+        frame_idx = min(int(self.time_step), self.motion.human_body_pos_w.shape[0] - 1)
+        rotations = None
+        if hasattr(self.motion, "human_body_quat_w"):
+            rotations = self.motion.human_body_quat_w[frame_idx]
+        self.draw_human_skeleton(
+            self.motion.human_body_pos_w[frame_idx],
+            rotations=rotations,
+            show_axes=self.show_human_skeleton_axes,
+        )
 
     def motion_play(self):
         t = int(self.time_step)
@@ -256,6 +417,7 @@ class simulator(infere):
         img = self.renderer.render()
         self.video_recorder(img)
 
+        self.draw_current_human_skeleton()
         self.viewer.sync()
         self.update_vel_geom()
 
@@ -506,6 +668,7 @@ class simulator(infere):
     def init_vel_geom(self, input):
         # create an invisibale geom and add label on it
         geom = self.viewer.user_scn.geoms[self.viewer.user_scn.ngeom]
+        self.vel_geom_id = self.viewer.user_scn.ngeom
         mujoco.mjv_initGeom(
             geom,
             type=mujoco.mjtGeom.mjGEOM_LABEL,
@@ -519,10 +682,13 @@ class simulator(infere):
         )
         geom.label = str(input)  # set label text
         self.viewer.user_scn.ngeom += 1
+        self._persistent_user_geom_count = self.viewer.user_scn.ngeom
 
     def update_vel_geom(self):
         # update the geom position and label text
-        geom = self.viewer.user_scn.geoms[self.viewer.user_scn.ngeom - 1]
+        if self.vel_geom_id is None:
+            return
+        geom = self.viewer.user_scn.geoms[self.vel_geom_id]
         geom.pos = self.d.qpos[:3] + np.array([0.0, 0.0, 1.0])
         geom.label = "rb h{:.2f} \r\nGoal Vel: x: {:.2f}, y: {:.2f}, yaw: {:.2f},force_z: {:.2f}".format(
             0.0,

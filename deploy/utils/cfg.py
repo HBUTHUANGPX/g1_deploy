@@ -14,7 +14,8 @@ class cfg:
     # }
     group = {
         "policy": "deploy/policy/g1/2026-05-01_11-10-46_multi_node_test",
-        "motion": "item_pick_up_standing_R_001__A410"
+        "motion": "nymeria_soma"
+        # "motion": "item_pick_up_standing_R_001__A410"
         # "motion": "dance_hiphop_shuffle_square_R_fast_002__A318"
         # "motion": "Neutral_walk_forward_002__A057"
         # "motion": "Neutral_throw_ball_001__A057"

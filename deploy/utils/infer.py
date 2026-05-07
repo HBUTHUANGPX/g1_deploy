@@ -23,22 +23,13 @@ class infere:
         self.body_indexes = np.asarray(
             self.motion_body_names_in_isaacsim_index, dtype=np.int64
         )
+        self._init_motion_loader()
         # body_indexes = [
         #     self.mujoco_all_body_names.index(name) for name in cfg.motion_body_names
         # ]
         # self.body_indexes = np.asarray(
         #     body_indexes, dtype=np.int64
         # )
-        self.motion = MotionLoader(
-            cfg.motion_file,
-            robot_body_names=cfg.isaac_sim_link_name, #仿真中的body序列
-            robot_joint_names=cfg.isaac_sim_joint_name,#仿真中的joint序列
-            body_indexes=self.body_indexes,
-            desire_human_joint_names=cfg.desire_human_joint_names,
-            history_frames=cfg.history_frames,
-            future_frames=cfg.future_frames,
-            device="cpu",
-        )
         self.policy_dt = cfg.policy_dt
         if cfg.motion_play:
             self.policy_dt = (1 / self.motion.fps)
@@ -68,6 +59,17 @@ class infere:
         self.time_step = 0
         self.single_obs = np.zeros(self.obs_num, dtype=np.float32)
 
+    def _init_motion_loader(self):
+        self.motion = MotionLoader(
+            cfg.motion_file,
+            robot_body_names=cfg.isaac_sim_link_name, #仿真中的body序列
+            robot_joint_names=cfg.isaac_sim_joint_name,#仿真中的joint序列
+            body_indexes=self.body_indexes,
+            desire_human_joint_names=cfg.desire_human_joint_names,
+            history_frames=cfg.history_frames,
+            future_frames=cfg.future_frames,
+            device="cpu",
+        )
     def _init_robot_conf(self):
         self.default_pos = np.array(
             cfg.leg_default_pos
@@ -157,8 +159,8 @@ class infere:
             self.actor_obs,
             self.human_obs,
             self.robot_obs,
-            np.array([[0]], dtype=np.float32),
-        )
+            np.array([[1]], dtype=np.float32),
+        ) # 1用的是robot encoder，0用的是human encoder
         self.action[:] = act.copy()
         self.q_human[:] = q_human.copy()
         self.q_robot[:] = q_robot.copy()
