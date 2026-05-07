@@ -110,3 +110,79 @@ def quat_mul(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
     z = qq - zz + (z1 + y1) * (w2 - x2)
 
     return np.stack([w, x, y, z], axis=-1).reshape(shape)
+
+
+def quat_apply(quat: np.ndarray, vec: np.ndarray) -> np.ndarray:
+    """Apply a quaternion rotation to a vector.
+
+    Args:
+        quat: The quaternion in (w, x, y, z). Shape is (..., 4).
+        vec: The vector in (x, y, z). Shape is (..., 3).
+
+    Returns:
+        The rotated vector in (x, y, z). Shape is (..., 3).
+    """
+    quat = np.asarray(quat)
+    vec = np.asarray(vec)
+    shape = vec.shape
+    quat = quat.reshape(-1, 4)
+    vec = vec.reshape(-1, 3)
+    xyz = quat[:, 1:]
+    t = np.cross(xyz, vec, axis=-1) * 2
+    return (vec + quat[:, 0:1] * t + np.cross(xyz, t, axis=-1)).reshape(shape)
+
+
+def quat_apply_inverse(quat: np.ndarray, vec: np.ndarray) -> np.ndarray:
+    """Apply an inverse quaternion rotation to a vector.
+
+    Args:
+        quat: The quaternion in (w, x, y, z). Shape is (..., 4).
+        vec: The vector in (x, y, z). Shape is (..., 3).
+
+    Returns:
+        The rotated vector in (x, y, z). Shape is (..., 3).
+    """
+    quat = np.asarray(quat)
+    vec = np.asarray(vec)
+    shape = vec.shape
+    quat = quat.reshape(-1, 4)
+    vec = vec.reshape(-1, 3)
+    xyz = quat[:, 1:]
+    t = np.cross(xyz, vec, axis=-1) * 2
+    return (vec - quat[:, 0:1] * t + np.cross(xyz, t, axis=-1)).reshape(shape)
+
+
+def subtract_frame_transforms(
+    t01: np.ndarray,
+    q01: np.ndarray,
+    t02: np.ndarray | None = None,
+    q02: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    r"""Subtract transformations between two reference frames into a stationary frame.
+
+    It performs the following transformation operation: :math:`T_{12} = T_{01}^{-1} \times T_{02}`,
+    where :math:`T_{AB}` is the homogeneous transformation matrix from frame A to B.
+
+    Args:
+        t01: Position of frame 1 w.r.t. frame 0. Shape is (N, 3).
+        q01: Quaternion orientation of frame 1 w.r.t. frame 0 in (w, x, y, z). Shape is (N, 4).
+        t02: Position of frame 2 w.r.t. frame 0. Shape is (N, 3).
+            Defaults to None, in which case the position is assumed to be zero.
+        q02: Quaternion orientation of frame 2 w.r.t. frame 0 in (w, x, y, z). Shape is (N, 4).
+            Defaults to None, in which case the orientation is assumed to be identity.
+
+    Returns:
+        A tuple containing the position and orientation of frame 2 w.r.t. frame 1.
+        Shape of the arrays are (N, 3) and (N, 4) respectively.
+    """
+    q10 = quat_inv(q01)
+    if q02 is not None:
+        q12 = quat_mul(q10, q02)
+    else:
+        q12 = q10
+
+    if t02 is not None:
+        t12 = quat_apply(q10, t02 - t01)
+    else:
+        t12 = quat_apply(q10, -t01)
+    return t12, q12

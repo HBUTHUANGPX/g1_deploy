@@ -190,8 +190,8 @@ class mini_g1_real:
             ].dq
 
         # imu_state quaternion: w, x, y, z
-        self.quat = np.array([1,0,0,0],dtype=np.float32)
-        # self.quat = np.array(self.low_state.imu_state.quaternion,dtype=np.float32)
+        # self.quat = np.array([1,0,0,0],dtype=np.float32)
+        self.quat = np.array(self.low_state.imu_state.quaternion,dtype=np.float32)
         self.ang_vel = np.array([self.low_state.imu_state.gyroscope], dtype=np.float32)
         if self.config.imu_type == "torso":
             # h1 and h1_2 imu is on the torso
@@ -228,15 +228,15 @@ class mini_g1_real:
         else:
             _kds = kds
         
-        print(_target_pos[0:6])
-        print(_target_pos[6:12])
-        print(_target_pos[12:15])
-        print(_target_pos[15:22])
-        print(_target_pos[22:29])
-        _target_pos[0:6] *= 0
-        _target_pos[6:12] *= 0
+        # print(_target_pos[0:6])
+        # print(_target_pos[6:12])
+        # print(_target_pos[12:15])
+        # print(_target_pos[15:22])
+        # print(_target_pos[22:29])
+        # _target_pos[0:6] *= 0
+        # _target_pos[6:12] *= 0
 
-        _target_pos[13:15] *= 0
+        # _target_pos[13:15] *= 0
         # _kps[13:15] *= 7
         for j in range(dof_size):
             motor_idx = dof_idx[j]
@@ -268,6 +268,23 @@ class real(infere, mini_g1_real):
     def __init__(self, config: Config):
         super().__init__()
         super(infere,self).__init__(config)
+        self.first_flag = True
+
+    def perpare_data(self):
+        super().perpare_data()
+        if self.first_flag:
+            self.first_flag = False
+            self.init_quat = self.quat.copy()
+            # compute initial yaw (z-axis) and build compensation quaternion
+            q = self.init_quat / np.linalg.norm(self.init_quat)
+            w, x, y, z = q
+            self.init_yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+            half = -0.5 * self.init_yaw
+            self.yaw_comp_quat = np.array(
+                [np.cos(half), 0.0, 0.0, np.sin(half)], dtype=np.float32
+            )
+        # compensate current quaternion with initial yaw offset
+        self.quat = quat_mul(self.yaw_comp_quat, self.quat)
 
     def move_to_default_pos(self):
         print("[REAL] Moving to default pos.")
@@ -307,11 +324,6 @@ class real(infere, mini_g1_real):
     def default_pos_state(self):
         print("[REAL] Enter default pos state.")
         print("[REAL] Waiting for the Button A signal...")
-        print(self.first_frame_pos[0:6])
-        print(self.first_frame_pos[6:12])
-        print(self.first_frame_pos[12:15])
-        print(self.first_frame_pos[15:22])
-        print(self.first_frame_pos[22:29])
         while self.remote_controller.button[KeyMap.A] != 1:
             for i in range(len(self.config.leg_joint2motor_idx)):
                 motor_idx = self.config.leg_joint2motor_idx[i]
@@ -332,6 +344,7 @@ class real(infere, mini_g1_real):
             time.sleep(self.config.control_dt)
 
     def run(self):
+        step_start = time.time()
         self.counter += 1
         self.perpare_data()
         # =========================
@@ -342,8 +355,13 @@ class real(infere, mini_g1_real):
         if self.time_step >= self.motion.time_step_total:
             self.time_step = 1
         # send the command
+        # self.update_cmd(target_pos = np.copy(self.motion.joint_pos[int(self.time_step)])[self.isaac_sim2mujoco_index],kps = self.P_gains,kds = self.D_gains)
         self.update_cmd(target_pos = self.target_dof_pos,kps = self.P_gains,kds = self.D_gains)
-        time.sleep(self.config.control_dt)
+        # time.sleep(self.config.control_dt)
+
+        time_until_next_step = self.config.control_dt - (time.time() - step_start)
+        if time_until_next_step > 0:
+            time.sleep(time_until_next_step)
 
     def _obs_motion_joint_pos_command(self):
         return np.copy(self.motion.joint_pos[int(self.time_step)])
@@ -376,13 +394,13 @@ class real(infere, mini_g1_real):
         return motion_ref_ori_b
 
     def _obs_base_ang_vel(self):
-        return self.ang_vel * 0
+        return self.ang_vel
 
     def _obs_joint_pos(self):
         return (self.qj - self.default_pos)[self.mujoco2isaac_sim_index]
 
     def _obs_joint_vel(self):
-        return self.dqj[self.mujoco2isaac_sim_index] * 0
+        return self.dqj[self.mujoco2isaac_sim_index]
 
     def _obs_actions(self):
         return self.action
@@ -393,7 +411,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--net", 
-        type=str, default="eth0", help="network interface")
+        type=str, default="eno1", help="network interface")
     parser.add_argument(
         "--config",
         type=str,

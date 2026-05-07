@@ -7,10 +7,23 @@ class cfg:
     simulator_dt = 0.002
     policy_dt = 0.02
 
+    # group = {
+    #     "policy": "deploy/policy/g1/2026-02-26_22-16-14_G1_slowly_walk",
+    #     "motion": "03_fast_forward_walk_120Hz"
+    #     # "motion": "01_slowly_forward_walk_120Hz"
+    # }
+    group = {
+        "policy": "deploy/policy/g1/2026-05-01_11-10-46_multi_node_test",
+        "motion": "item_pick_up_standing_R_001__A410"
+        # "motion": "dance_hiphop_shuffle_square_R_fast_002__A318"
+        # "motion": "Neutral_walk_forward_002__A057"
+        # "motion": "Neutral_throw_ball_001__A057"
+        # "motion": "big_light_one_hand_pick_up_front_low_R_005__A508"
+    }
     policy_path = (
         current_path
         + "/"
-        + "deploy/policy/g1/2026-02-26_09-56-10_G1_slowly_walk"
+        + group["policy"]
         + "/policy.onnx"
     )
     asset_path = current_path + "/deploy/assets/unitree_g1"
@@ -18,8 +31,11 @@ class cfg:
     urdf_path = asset_path + "/g1_29dof_mode_15.urdf"
     motion_file = (
         current_path
-        + "/deploy/artifacts/g1/"
-        + "xsens_bvh/251203/01_slowly_forward_walk_120Hz.npz"
+        + "/"
+        + group["policy"]
+        + "/motion/"
+        + group["motion"]
+        + ".npz"
     )
     only_leg_flag = False  # True, False
     with_wrist_flag = True  # True, False
@@ -80,23 +96,47 @@ class cfg:
     isaac_sim_link_name = urdf_graph.bfs_link_order() # env.unwrapped.scene["robot"].body_names
 
     motion_body_names = [
-    "pelvis",
+        "pelvis",
 
-    "left_hip_yaw_link",
-    "left_knee_link",
-    "left_ankle_roll_link",
-    "right_hip_yaw_link",
-    "right_knee_link",
-    "right_ankle_roll_link",
+        "left_hip_yaw_link",
+        "left_knee_link",
+        "left_ankle_roll_link",
+        "right_hip_yaw_link",
+        "right_knee_link",
+        "right_ankle_roll_link",
 
-    "torso_link",
+        "torso_link",
 
-    "left_shoulder_yaw_link",
-    "left_elbow_link",
-    "left_wrist_yaw_link",
-    "right_shoulder_yaw_link",
-    "right_elbow_link",
-    "right_wrist_yaw_link",
-]
+        "left_shoulder_pitch_link",
+        "left_shoulder_yaw_link",
+        "left_elbow_link",
+        "left_wrist_yaw_link",
+        "right_shoulder_pitch_link",
+        "right_shoulder_yaw_link",
+        "right_elbow_link",
+        "right_wrist_yaw_link",
+    ]
 
     motion_reference_body = "torso_link"
+
+    desire_human_joint_names: list[str] = [
+        "Hips",
+        "Spine1","Spine2","Chest",
+        "Neck1","Neck2",
+        "Head","HeadEnd",
+        "LeftShoulder","LeftArm","LeftForeArm","LeftHand",
+        "RightShoulder","RightArm","RightForeArm","RightHand",
+        "LeftLeg","LeftShin","LeftFoot","LeftToeBase","LeftToeEnd",
+        "RightLeg","RightShin","RightFoot","RightToeBase","RightToeEnd",
+    ]
+    fsq_human_body_names: list[str] = [
+        "Chest",
+        "HeadEnd",
+        "LeftShoulder", "LeftArm", "LeftForeArm",
+        "RightShoulder", "RightArm", "RightForeArm",
+        "LeftLeg", "LeftShin", "LeftFoot",
+        "RightLeg", "RightShin", "RightFoot",
+    ]
+    human_anchor_name: str = "Hips"
+    history_frames = 0
+    future_frames = 9

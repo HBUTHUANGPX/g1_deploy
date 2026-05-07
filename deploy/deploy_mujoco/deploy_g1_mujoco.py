@@ -1,6 +1,6 @@
 from deploy.utils.video_recorder import VideoRecorder
 from deploy.utils.math_func import *
-from deploy.utils.cfg import cfg,current_path
+from deploy.utils.cfg import cfg, current_path
 from deploy.utils.infer import infere
 
 import numpy as np
@@ -10,8 +10,35 @@ import os
 import mujoco.viewer
 import mujoco
 
-
 np.set_printoptions(precision=16, linewidth=100, threshold=np.inf, suppress=True)
+
+
+def rot6d_from_quat(quaternions: np.ndarray) -> np.ndarray:
+    """Convert quaternions to the flattened first two rotation-matrix columns.
+
+    Args:
+        quaternions: The quaternion orientation in (w, x, y, z). Shape is (..., 4).
+
+    Returns:
+        Flattened 6D rotation representation. Shape is (..., 6).
+    """
+    quaternions = np.asarray(quaternions)
+    r, i, j, k = np.moveaxis(quaternions, -1, 0)
+    two_s = 2.0 / np.sum(quaternions * quaternions, axis=-1)
+
+    o = np.stack(
+        (
+            1 - two_s * (j * j + k * k),
+            two_s * (i * j - k * r),
+            two_s * (i * j + k * r),
+            1 - two_s * (i * i + k * k),
+            two_s * (i * k - j * r),
+            two_s * (j * k + i * r),
+        ),
+        -1,
+    )
+    return o.reshape(quaternions.shape[:-1] + (6,))
+
 
 class simulator(infere):
 
@@ -40,16 +67,37 @@ class simulator(infere):
 
     def motion_play(self):
         t = int(self.time_step)
-        self.d.qpos[0:3] = np.asarray(
-            self.motion.body_pos_w[t, 7, :]
-        )
-        self.d.qpos[0:2] = 0
+        self.d.qpos[0:3] = np.asarray(self.motion.body_pos_w[t, 0, :])
+        # self.d.qpos[0:2] = 0
+        # self.d.qpos[2] = 1.0
         q = np.asarray(self.motion.body_quat_w[t, 0, :])
         self.d.qpos[3:7] = q
         self.d.qpos[7 : 7 + len(self.default_pos)] = np.asarray(
-            self.motion.joint_pos[t]
-        )[self.isaac_sim2mujoco_index]
+            self.motion.joint_pos[t][self.isaac_sim2mujoco_index]
+        )
+        self.d.qvel[:] = 0
         mujoco.mj_forward(self.m, self.d)
+        self.time_step += 1
+        mujoco_body_names_indices = [
+            mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_BODY, name)
+            for name in cfg.motion_body_names
+        ]
+        body_positions = np.copy(self.d.xpos[mujoco_body_names_indices, :])
+        motion_body_positions = self.motion.body_pos_w[t]
+
+        motion_reference_body_quat = self.d.xquat[
+            mujoco.mj_name2id(
+                self.m, mujoco.mjtObj.mjOBJ_BODY, cfg.motion_reference_body
+            ),
+            :,
+        ]
+        self.pin.mujoco_to_pinocchio(
+            self.d.qpos[7:],
+            base_pos=self.d.qpos[0:3],
+            base_quat=self.d.qpos[3:7][[1, 2, 3, 0]],
+        )
+        _quat = self.pin.get_link_quaternion(cfg.motion_reference_body)
+        
         return
 
     def _init_robot_conf(self):
@@ -63,6 +111,13 @@ class simulator(infere):
             for name in self.mujoco_all_body_names
         ]
         print("mujoco_all_body_names:\r\n", self.mujoco_all_body_names)
+        self.fsq_human_body_indexes = [
+            cfg.desire_human_joint_names.index(name)
+            for name in cfg.fsq_human_body_names
+        ]
+        self.human_anchor_body_index = cfg.desire_human_joint_names.index(
+            cfg.human_anchor_name
+        )
 
     def run(self):
         save_data_flag = 1
@@ -106,7 +161,7 @@ class simulator(infere):
             "P_gain": [self.P_gains],
             "D_gain": [self.D_gains],
             "target_pos": [],
-            "qfrc_actuator":[],
+            "qfrc_actuator": [],
         }
 
         while self.viewer.is_running():
@@ -148,7 +203,8 @@ class simulator(infere):
             log["qfrc_actuator"].append(np.copy(self.d.qfrc_actuator))
             # if self.time_step >= 50*60:
             if self.time_step >= self.motion.time_step_total:
-                break
+                self.time_step = 0
+                # break
         for k in (
             "dof_positions",
             "dof_velocities",
@@ -161,7 +217,7 @@ class simulator(infere):
             "xpos",
             "xquat",
             "cvel",
-            "qfrc_actuator"
+            "qfrc_actuator",
         ):
             log[k] = np.stack(log[k], axis=0)
         save_path = current_path + "/tmp/motion.npz"
@@ -179,16 +235,16 @@ class simulator(infere):
         self.V_n = self.d.qvel[6:]
 
         # if self.time_step >= 100:
-        if self.time_step >= self.motion.time_step_total:
-            self.time_step = 10
+        if self.time_step >= self.motion.time_step_total-self.motion.future_frames:
+            self.time_step = self.motion.history_frames
 
         if cfg.motion_play:
             self.motion_play()
         else:
             self.minimum_infer()
-        # print(f"time_step: {self.time_step}")
+            # print(f"time_step: {self.time_step}")
+            self.sim_loop()
         self.contact_force()
-        self.sim_loop()
         # 更新 Renderer 场景，使用查看器的相机和选项，使图像与窗口一致
         self.renderer.update_scene(
             self.d,
@@ -203,35 +259,48 @@ class simulator(infere):
         self.viewer.sync()
         self.update_vel_geom()
 
-    def _obs_motion_joint_pos_command(self):
-        return np.copy(self.motion.joint_pos[int(self.time_step)])
-
-    def _obs_motion_joint_vel_command(self):
-        return np.copy(self.motion.joint_vel[int(self.time_step)])
-
-    def _obs_motion_ref_ori_b(self):
+    def _obs_ref_human_anchor_rot6d_in_sim_anchor(self):
         self.pin.mujoco_to_pinocchio(
             self.d.qpos[7:],
             base_pos=self.d.qpos[0:3],
             base_quat=self.d.qpos[3:7][[1, 2, 3, 0]],
         )
         _quat = self.pin.get_link_quaternion(cfg.motion_reference_body)
-        self.robot_ref_quat_w = np.expand_dims(_quat, axis=0)  # shape [n,4]
-        self.ref_quat_w = self.motion.body_quat_w[
-            int(self.time_step), cfg.motion_body_names.index(cfg.motion_reference_body), :
+        sim_robot_anchor_quat_w = np.expand_dims(_quat, axis=0)  # shape [n,4]
+        ref_human_anchor_quat_w = self.motion.human_body_quat_w[
+            int(self.time_step),
+            self.human_anchor_body_index,
+            :,
         ]  # shape [n,4]
-        q01 = self.robot_ref_quat_w
-        q02 = self.ref_quat_w
+        q01 = sim_robot_anchor_quat_w
+        q02 = ref_human_anchor_quat_w
         if q02 is not None and q02.ndim == 1:
             q02 = np.expand_dims(q02, axis=0)
-        q10 = quat_inv(q01)
-        if q02 is not None:
-            q12 = quat_mul(q10, q02)
-        else:
-            q12 = q10
-        mat = matrix_from_quat(q12)
+        _, ref_human_anchor_quat_in_sim_anchor = subtract_frame_transforms(
+            np.zeros((1, 3), dtype=np.float32),
+            q01,
+            np.zeros((1, 3), dtype=np.float32),
+            q02,
+        )
+        mat = matrix_from_quat(ref_human_anchor_quat_in_sim_anchor)
         motion_ref_ori_b = mat[..., :2].reshape(mat.shape[0], -1)  # shape [n,6]
         return motion_ref_ori_b
+
+    def _obs_sim_robot_anchor_rot6d_w(self):
+        self.pin.mujoco_to_pinocchio(
+            self.d.qpos[7:],
+            base_pos=self.d.qpos[0:3],
+            base_quat=self.d.qpos[3:7][[1, 2, 3, 0]],
+        )
+        _quat = self.pin.get_link_quaternion(cfg.motion_reference_body)
+        sim_robot_anchor_quat_w = np.expand_dims(_quat, axis=0)
+        return rot6d_from_quat(sim_robot_anchor_quat_w)
+        # ref_quat_w = self.motion.body_quat_w[
+        #     int(self.time_step),
+        #     cfg.motion_body_names.index(cfg.motion_reference_body),
+        #     :,
+        # ]
+        # return rot6d_from_quat(ref_quat_w)
 
     def _obs_base_ang_vel(self):
         return self.d.qvel[3:6]
@@ -244,6 +313,114 @@ class simulator(infere):
 
     def _obs_actions(self):
         return self.action
+
+    def _obs_actor_ref_robot_fsq_feature_window(self):
+        start = int(self.time_step)
+        end = int(self.time_step) + self.motion.window_size
+        num_envs = 1
+        window_size = self.motion.window_size
+        motion_anchor_body_index = cfg.motion_body_names.index(
+            cfg.motion_reference_body
+        )
+        robot_anchor_quat = self.motion.body_quat_w[
+            start:end, motion_anchor_body_index
+        ][None, ...]
+        robot_anchor_rot6d = rot6d_from_quat(robot_anchor_quat)
+        robot_anchor_pos = self.motion.body_pos_w[
+            start:end, motion_anchor_body_index
+        ][None, ...]
+        robot_joint_pos = self.motion.joint_pos[start:end][None, ...]
+        robot_body_pos = self.motion.body_pos_w[start:end][None, ...]
+        robot_body_quat = self.motion.body_quat_w[start:end][None, ...]
+        num_robot_bodies = robot_body_pos.shape[2]
+        robot_anchor_pos_repeat = np.broadcast_to(
+            robot_anchor_pos[:, :, None, :],
+            (num_envs, window_size, num_robot_bodies, 3),
+        )
+        robot_anchor_quat_repeat = np.broadcast_to(
+            robot_anchor_quat[:, :, None, :],
+            (num_envs, window_size, num_robot_bodies, 4),
+        )
+        ref_robot_body_pos_in_ref_anchor, ref_robot_body_quat_in_ref_anchor = (
+            subtract_frame_transforms(
+                robot_anchor_pos_repeat.reshape(-1, 3),
+                robot_anchor_quat_repeat.reshape(-1, 4),
+                robot_body_pos.reshape(-1, 3),
+                robot_body_quat.reshape(-1, 4),
+            )
+        )
+        ref_robot_body_pos_in_ref_anchor = ref_robot_body_pos_in_ref_anchor.reshape(
+            num_envs, window_size, -1
+        )
+        ref_robot_body_rot6d_in_ref_anchor = rot6d_from_quat(
+            ref_robot_body_quat_in_ref_anchor
+        ).reshape(num_envs, window_size, -1)
+        actor_robot_feature = np.concatenate(
+            (
+                robot_anchor_rot6d,
+                robot_joint_pos,
+                ref_robot_body_pos_in_ref_anchor,
+                ref_robot_body_rot6d_in_ref_anchor,
+            ),
+            axis=-1,
+        )
+        actor_ref_robot_fsq_feature_window = actor_robot_feature.reshape(-1)
+        return actor_ref_robot_fsq_feature_window
+
+    def _obs_actor_ref_human_fsq_feature_window(self):
+        start = int(self.time_step)
+        end = int(self.time_step) + self.motion.window_size
+        num_envs = 1
+        window_size = self.motion.window_size
+        num_human_bodies = len(self.fsq_human_body_indexes)
+        human_anchor_quat = self.motion.human_body_quat_w[
+            start:end, self.human_anchor_body_index
+        ][None, ...]
+        human_anchor_rot6d = rot6d_from_quat(human_anchor_quat)
+        human_anchor_pos = self.motion.human_body_pos_w[
+            start:end, self.human_anchor_body_index
+        ][None, ...]
+        human_body_pos = self.motion.human_body_pos_w[start:end][
+            :, self.fsq_human_body_indexes, :
+        ][None, ...]
+        human_body_quat = self.motion.human_body_quat_w[start:end][
+            :, self.fsq_human_body_indexes, :
+        ][None, ...]
+        human_joint_quat = self.motion.human_joint_quat[start:end][
+            :, self.fsq_human_body_indexes, :
+        ][None, ...]
+        ref_human_body_pos_from_ref_anchor_w = human_body_pos - human_anchor_pos[
+            :, :, None, :
+        ]
+        human_anchor_quat_w = np.broadcast_to(
+            human_anchor_quat[:, :, None, :],
+            (num_envs, window_size, num_human_bodies, 4),
+        )
+        ref_human_body_pos_in_ref_anchor = quat_apply_inverse(
+            human_anchor_quat_w.reshape(-1, 4),
+            ref_human_body_pos_from_ref_anchor_w.reshape(-1, 3),
+        ).reshape(num_envs, window_size, -1)
+        ref_human_body_quat_in_ref_anchor = quat_mul(
+            quat_inv(human_anchor_quat_w.reshape(-1, 4)),
+            human_body_quat.reshape(-1, 4),
+        )
+        ref_human_body_rot6d_in_ref_anchor = rot6d_from_quat(
+            ref_human_body_quat_in_ref_anchor
+        ).reshape(num_envs, window_size, -1)
+        human_joint_rot6d = rot6d_from_quat(human_joint_quat).reshape(
+            num_envs, window_size, -1
+        )
+        actor_human_feature = np.concatenate(
+            (
+                human_anchor_rot6d,
+                human_joint_rot6d,
+                ref_human_body_pos_in_ref_anchor,
+                ref_human_body_rot6d_in_ref_anchor,
+            ),
+            axis=-1,
+        )
+        actor_ref_human_fsq_feature_window = actor_human_feature.reshape(-1)
+        return actor_ref_human_fsq_feature_window
 
     def sim_loop(self):
         for i in range(self.control_decimation):

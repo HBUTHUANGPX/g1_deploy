@@ -162,3 +162,7 @@ cython_debug/
 logs
 deploy_mujoco_recordings/*
 MUJOCO_LOG.TXT
+*/tmp
+tmp/motion.npz
+deploy/policy/*
+deploy/artifacts/*
