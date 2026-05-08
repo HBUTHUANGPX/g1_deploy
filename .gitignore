@@ -166,3 +166,4 @@ MUJOCO_LOG.TXT
 tmp/motion.npz
 deploy/policy/*
 deploy/artifacts/*
+**/tests/*

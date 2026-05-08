@@ -57,7 +57,7 @@ class simulator(infere):
         self.paused = False
         self.change_id = 0
         self.show_human_skeleton = True
-        self.show_human_skeleton_axes = False
+        self.show_human_skeleton_axes = True
         self.human_parent_indices = self._load_human_parent_indices()
         self.vel_geom_id = None
         self._persistent_user_geom_count = 0

@@ -15,6 +15,9 @@ setup(
         "onnx==1.20.0",
         "onnxruntime==1.23.2",
         "mujoco==3.2.7",
-        "opencv-python-headless==4.11.0.86"
+        "opencv-python-headless==4.11.0.86",
+        "protobuf",
+        "pybind11",
+        "pyzmq",
     ],
 )
