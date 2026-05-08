@@ -53,12 +53,12 @@ bool XsensDatagramParser::parseQuaternionDatagram(XsensRawFrameAssembler& assemb
   {
     return false;
   }
-  assembler.updateDatagramMetadata(datagram->sampleCounter(), datagram->frameTime());
   for (const auto& item : datagram->getData())
   {
     assembler.updateSegmentPose(item);
   }
-  return true;
+  return assembler.markSegmentPoseDatagram(
+    datagram->sampleCounter(), datagram->frameTime());
 }
 
 bool XsensDatagramParser::parseJointAnglesDatagram(XsensRawFrameAssembler& assembler)
@@ -68,12 +68,12 @@ bool XsensDatagramParser::parseJointAnglesDatagram(XsensRawFrameAssembler& assem
   {
     return false;
   }
-  assembler.updateDatagramMetadata(datagram->sampleCounter(), datagram->frameTime());
   for (const auto& item : datagram->getData())
   {
     assembler.updateJointAngles(item);
   }
-  return true;
+  return assembler.markJointAnglesDatagram(
+    datagram->sampleCounter(), datagram->frameTime());
 }
 
 bool XsensDatagramParser::parseLinearSegmentKinematicsDatagram(
@@ -89,7 +89,7 @@ bool XsensDatagramParser::parseLinearSegmentKinematicsDatagram(
   {
     assembler.updateSegmentLinearKinematics(item);
   }
-  return true;
+  return false;
 }
 
 bool XsensDatagramParser::parseAngularSegmentKinematicsDatagram(
@@ -105,7 +105,7 @@ bool XsensDatagramParser::parseAngularSegmentKinematicsDatagram(
   {
     assembler.updateSegmentAngularKinematics(item);
   }
-  return true;
+  return false;
 }
 
 bool XsensDatagramParser::parseCenterOfMassDatagram(XsensRawFrameAssembler& assembler)
@@ -119,7 +119,7 @@ bool XsensDatagramParser::parseCenterOfMassDatagram(XsensRawFrameAssembler& asse
   const float* center_of_mass = datagram->getData();
   assembler.updateCenterOfMass(
     Vector3{center_of_mass[0], center_of_mass[1], center_of_mass[2]});
-  return true;
+  return false;
 }
 
 }  // namespace xsens_mvn_cpp

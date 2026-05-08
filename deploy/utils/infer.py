@@ -159,7 +159,7 @@ class infere:
             self.actor_obs,
             self.human_obs,
             self.robot_obs,
-            np.array([[1]], dtype=np.float32),
+            np.array([[0]], dtype=np.float32),
         ) # 1用的是robot encoder，0用的是human encoder
         self.action[:] = act.copy()
         self.q_human[:] = q_human.copy()

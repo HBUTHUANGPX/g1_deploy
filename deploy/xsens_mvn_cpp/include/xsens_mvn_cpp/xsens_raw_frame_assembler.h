@@ -93,7 +93,33 @@ public:
   void updateCenterOfMass(const Vector3& center_of_mass);
 
   /**
-   * @brief Update source datagram timing metadata.
+   * @brief Record that a segment-pose datagram has been applied.
+   *
+   * Preconditions:
+   * - The segment-pose datagram items for this header have been applied.
+   *
+   * Postconditions:
+   * - The latest frame metadata is updated.
+   * - Returns true if the same sample also has joint angles and should be
+   *   published as a complete motion sample.
+   */
+  bool markSegmentPoseDatagram(int sample_counter, int frame_time);
+
+  /**
+   * @brief Record that a joint-angle datagram has been applied.
+   *
+   * Preconditions:
+   * - The joint-angle datagram items for this header have been applied.
+   *
+   * Postconditions:
+   * - The latest frame metadata is updated.
+   * - Returns true if the same sample also has segment poses and should be
+   *   published as a complete motion sample.
+   */
+  bool markJointAnglesDatagram(int sample_counter, int frame_time);
+
+  /**
+   * @brief Update source datagram timing metadata without publishing.
    *
    * Preconditions:
    * - Values are copied from a parsed Xsens datagram header.
@@ -117,10 +143,14 @@ public:
 private:
   XsensRawSegmentState& mutableSegment(int segment_id);
   XsensRawJointState& mutableJoint(int parent_segment_id, int child_segment_id);
+  bool markPublishableMotionSampleIfComplete(int sample_counter);
   std::string segmentName(int segment_id) const;
   std::string jointName(int parent_segment_id, int child_segment_id) const;
 
   int prop_count_ = 0;
+  int latest_segment_pose_sample_counter_ = -1;
+  int latest_joint_angles_sample_counter_ = -1;
+  int published_motion_sample_counter_ = -1;
   XsensRawFrame latest_frame_;
   std::map<int, XsensRawSegmentState> segments_by_id_;
   std::map<std::pair<int, int>, XsensRawJointState> joints_by_pair_;

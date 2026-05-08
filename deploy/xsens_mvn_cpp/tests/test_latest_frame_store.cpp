@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "xsens_mvn_cpp/latest_frame_store.h"
+#include "xsens_mvn_cpp/xsens_raw_frame_assembler.h"
 
 TEST(LatestFrameStoreTest, StartsWithoutFrame)
 {
@@ -48,4 +49,18 @@ TEST(LatestFrameStoreTest, SnapshotIsACopy)
   snapshot.joints.front().name = "mutated";
 
   EXPECT_EQ(store.snapshot().joints.front().name, "left_knee");
+}
+
+TEST(XsensRawFrameAssemblerTest, PublishesOnlyWhenPoseAndJointAnglesShareSampleCounter)
+{
+  xsens_mvn_cpp::XsensRawFrameAssembler assembler;
+
+  EXPECT_FALSE(assembler.markSegmentPoseDatagram(10, 1000));
+  EXPECT_FALSE(assembler.markJointAnglesDatagram(11, 1004));
+  EXPECT_TRUE(assembler.markSegmentPoseDatagram(11, 1004));
+  EXPECT_FALSE(assembler.markJointAnglesDatagram(11, 1004));
+
+  const auto snapshot = assembler.snapshot();
+  EXPECT_EQ(snapshot.sample_counter, 11);
+  EXPECT_EQ(snapshot.frame_time, 1004);
 }

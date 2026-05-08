@@ -63,6 +63,20 @@ void XsensRawFrameAssembler::updateDatagramMetadata(int sample_counter, int fram
   latest_frame_.frame_time = frame_time;
 }
 
+bool XsensRawFrameAssembler::markSegmentPoseDatagram(int sample_counter, int frame_time)
+{
+  updateDatagramMetadata(sample_counter, frame_time);
+  latest_segment_pose_sample_counter_ = sample_counter;
+  return markPublishableMotionSampleIfComplete(sample_counter);
+}
+
+bool XsensRawFrameAssembler::markJointAnglesDatagram(int sample_counter, int frame_time)
+{
+  updateDatagramMetadata(sample_counter, frame_time);
+  latest_joint_angles_sample_counter_ = sample_counter;
+  return markPublishableMotionSampleIfComplete(sample_counter);
+}
+
 XsensRawFrame XsensRawFrameAssembler::snapshot() const
 {
   XsensRawFrame frame = latest_frame_;
@@ -96,6 +110,19 @@ XsensRawJointState& XsensRawFrameAssembler::mutableJoint(int parent_segment_id, 
   joint.child_segment_id = child_segment_id;
   joint.name = jointName(parent_segment_id, child_segment_id);
   return joint;
+}
+
+bool XsensRawFrameAssembler::markPublishableMotionSampleIfComplete(int sample_counter)
+{
+  const bool has_segment_pose = latest_segment_pose_sample_counter_ == sample_counter;
+  const bool has_joint_angles = latest_joint_angles_sample_counter_ == sample_counter;
+  const bool already_published = published_motion_sample_counter_ == sample_counter;
+  if (!has_segment_pose || !has_joint_angles || already_published)
+  {
+    return false;
+  }
+  published_motion_sample_counter_ = sample_counter;
+  return true;
 }
 
 std::string XsensRawFrameAssembler::segmentName(int segment_id) const

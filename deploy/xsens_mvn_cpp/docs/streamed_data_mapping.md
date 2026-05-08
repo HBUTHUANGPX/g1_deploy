@@ -26,7 +26,7 @@ Consumers own these responsibilities:
 - multi-frame buffering and interpolation;
 - mapping Xsens segment names or ids to policy or robot names;
 - converting joint angles to quaternions;
-- converting coordinate systems;
+- converting coordinate systems or applying fixed convention offsets;
 - filtering body, prop, finger, or object tracking segments;
 - deciding whether a frame should be interpreted as human motion or robot motion.
 
@@ -116,6 +116,10 @@ The receiver exposes this as:
 - `XsensRawJointState.name`;
 - `XsensRawJointState.angles`.
 
+The Python online human adapter maps these raw entries into
+`HumanMotionSample.human_joint_angles` using explicit MVN parent-child segment
+pairs. The mapped angles remain raw streamed angle triplets.
+
 These are raw `x, y, z` joint angle values from the stream. They are not
 quaternions. Any `joint_relative_quaternion` field should be derived in the
 consumer from either:
@@ -126,6 +130,11 @@ consumer from either:
 This boundary is deliberate. It keeps the receiver independent from retargeting
 policy assumptions and makes online human-motion and robot-motion consumers
 easier to evolve separately.
+
+The current Python human-motion consumer derives `human_joint_quat` from the
+raw streamed angle triplets. Any fixed coordinate or quaternion convention
+adjustment should be provided as a consumer-owned sample transform. The raw
+`human_joint_angles` field must not be changed by that step.
 
 Ergonomic joint angles are part of the same MVN stream. They have the same data
 layout as regular joint angles, but the local point id is always `0`. Consumers
@@ -167,7 +176,7 @@ extension point.
 `Scaling Data` is important for visualization and mesh fitting. It is not
 required for the first online human-motion loader if the consumer only uses
 segment poses and joint angles. It should remain a future parser extension,
-especially if visualization or skeleton calibration becomes part of the runtime
+especially if visualization or skeleton fitting becomes part of the runtime
 pipeline.
 
 `Character Meta Data` can matter in multi-person streaming. The current receiver
@@ -184,10 +193,11 @@ mixed into the first human-motion consumer path.
   source for human segments.
 - Treat `Joint Angles` as raw angle triplets, not quaternions.
 - Keep derived quaternion conversion in the consumer layer.
+- Keep fixed 90-degree or 180-degree convention rotations in the consumer
+  layer, not in the pybind receiver.
 - Do not assume every frame contains every datagram type.
 - Do not assume segment count, joint count, or segment ordering is constant.
 - Use stable ids or names for mapping, not vector indices alone.
 - Preserve unknown or unsupported datagrams by ignoring them safely.
 - Keep robot-motion and human-motion consumers behind separate observation
   builders, even if they share the same latest-frame source interface.
-

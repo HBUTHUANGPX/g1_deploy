@@ -4,8 +4,12 @@ from typing import Sequence
 
 import numpy as np
 
-from deploy.utils.math_func import quat_inv, quat_mul
-from deploy.xsens_mvn_cpp.types import HumanMotionSample, XSENS_TO_HUMAN_JOINT
+from deploy.utils.math_func import quat_mul
+from deploy.xsens_mvn_cpp.types import (
+    HUMAN_JOINT_TO_XSENS_JOINT_SEGMENTS,
+    HumanMotionSample,
+    XSENS_TO_HUMAN_JOINT,
+)
 
 
 class XsensRawFrameHumanMotionAdapter:
@@ -41,11 +45,11 @@ class XsensRawFrameHumanMotionAdapter:
         self.name_map = dict(XSENS_TO_HUMAN_JOINT)
         if name_map is not None:
             self.name_map.update(name_map)
+        self.joint_angle_map = dict(HUMAN_JOINT_TO_XSENS_JOINT_SEGMENTS)
         self.missing_position = np.asarray(missing_position, dtype=np.float32)
         self.missing_quaternion_wxyz = np.asarray(
             missing_quaternion_wxyz, dtype=np.float32
         )
-        self.parent_indices = self._build_parent_indices()
 
     def to_human_sample(self, frame) -> HumanMotionSample:
         """Convert one latest raw frame into a `HumanMotionSample`.
@@ -54,14 +58,15 @@ class XsensRawFrameHumanMotionAdapter:
         - `frame` is a snapshot returned by `xsens_mvn_cpp_py`.
 
         Postconditions:
-        - Segment world positions and quaternions are copied to numpy arrays.
-        - Joint angles are intentionally ignored in this first online human path.
+        - Segment world positions, segment world quaternions, and streamed
+          joint angles are copied to numpy arrays.
         """
 
         segments_by_name = {segment.name: segment for segment in frame.segments}
         positions = np.zeros((len(self.desired_joint_names), 3), dtype=np.float32)
         quaternions = np.zeros((len(self.desired_joint_names), 4), dtype=np.float32)
         valid_mask = np.zeros(len(self.desired_joint_names), dtype=bool)
+        joint_angles, joint_angle_valid_mask = self._map_joint_angles(frame)
 
         for index, joint_name in enumerate(self.desired_joint_names):
             xsens_name = self.name_map.get(joint_name, joint_name)
@@ -75,19 +80,56 @@ class XsensRawFrameHumanMotionAdapter:
             quaternions[index] = self._quaternion_to_array(segment.orientation)
             valid_mask[index] = True
 
-        joint_quaternions = self._derive_joint_quaternions(quaternions, valid_mask)
+        joint_quaternions = self._joint_angles_to_quaternions(
+            joint_angles,
+            joint_angle_valid_mask,
+        )
 
         frame_time = int(getattr(frame, "frame_time", 0))
         sequence = int(getattr(frame, "sequence", 0))
+        sample_counter = int(getattr(frame, "sample_counter", 0))
         return HumanMotionSample(
             joint_names=list(self.desired_joint_names),
             human_body_pos_w=positions,
             human_body_quat_w=quaternions,
             human_joint_quat=joint_quaternions,
+            human_joint_angles=joint_angles,
             valid_mask=valid_mask,
+            joint_angle_valid_mask=joint_angle_valid_mask,
             timestamp_ns=frame_time * 1_000_000,
             frame_id=f"xsens_raw:{sequence}",
+            source_sample_counter=sample_counter,
+            source_datagram_sequence=sequence,
         )
+
+    def _map_joint_angles(self, frame) -> tuple[np.ndarray, np.ndarray]:
+        """Map streamed MVN joint-angle entries into desired human joint order.
+
+        Preconditions:
+        - `frame.joints` contains raw type-20 entries parsed from MVN.
+
+        Postconditions:
+        - Returns raw angle triplets in stream units without conversion.
+        - Missing entries are zero-filled and marked invalid.
+        """
+
+        angles = np.zeros((len(self.desired_joint_names), 3), dtype=np.float32)
+        valid_mask = np.zeros(len(self.desired_joint_names), dtype=bool)
+        joints_by_pair = {
+            (joint.parent_segment_id, joint.child_segment_id): joint
+            for joint in getattr(frame, "joints", [])
+        }
+
+        for index, joint_name in enumerate(self.desired_joint_names):
+            pair = self.joint_angle_map.get(joint_name)
+            if pair is None:
+                continue
+            joint = joints_by_pair.get(pair)
+            if joint is None:
+                continue
+            angles[index] = self._vector3_to_array(joint.angles)
+            valid_mask[index] = True
+        return angles, valid_mask
 
     @staticmethod
     def _vector3_to_array(vector) -> np.ndarray:
@@ -118,20 +160,19 @@ class XsensRawFrameHumanMotionAdapter:
             dtype=np.float32,
         )
 
-    def _derive_joint_quaternions(
+    def _joint_angles_to_quaternions(
         self,
-        human_body_quat_w: np.ndarray,
+        joint_angles_xyz: np.ndarray,
         valid_mask: np.ndarray,
     ) -> np.ndarray:
-        """Derive local joint quaternions from parent and child world quaternions.
+        """Convert streamed MVN joint-angle triplets to local quaternions.
 
         Preconditions:
-        - `human_body_quat_w` is ordered by `desired_joint_names`.
-        - `valid_mask` marks entries with valid world segment poses.
+        - `joint_angles_xyz` is ordered by `desired_joint_names`.
+        - Angles are MVN type-20 x/y/z values in degrees.
 
         Postconditions:
-        - Root entries use their world quaternion.
-        - Non-root entries use `inverse(parent_world) * child_world`.
+        - Valid entries are converted using an xyz rotation composition.
         - Missing entries use the configured identity/default quaternion.
         """
 
@@ -139,62 +180,40 @@ class XsensRawFrameHumanMotionAdapter:
             self.missing_quaternion_wxyz,
             (len(self.desired_joint_names), 1),
         ).astype(np.float32)
+        if not valid_mask.any():
+            return joint_quat
 
-        for index, parent_index in enumerate(self.parent_indices):
-            if not valid_mask[index]:
-                continue
-            if parent_index < 0:
-                joint_quat[index] = human_body_quat_w[index]
-                continue
-            if not valid_mask[parent_index]:
-                continue
+        valid_angles = np.deg2rad(joint_angles_xyz[valid_mask].astype(np.float32))
+        half_angles = valid_angles * 0.5
+        cos_half = np.cos(half_angles)
+        sin_half = np.sin(half_angles)
 
-            parent = human_body_quat_w[parent_index][None, :]
-            child = human_body_quat_w[index][None, :]
-            joint_quat[index] = quat_mul(quat_inv(parent), child)[0].astype(np.float32)
+        qx = np.stack(
+            (
+                cos_half[:, 0],
+                sin_half[:, 0],
+                np.zeros_like(sin_half[:, 0]),
+                np.zeros_like(sin_half[:, 0]),
+            ),
+            axis=-1,
+        )
+        qy = np.stack(
+            (
+                cos_half[:, 1],
+                np.zeros_like(sin_half[:, 1]),
+                sin_half[:, 1],
+                np.zeros_like(sin_half[:, 1]),
+            ),
+            axis=-1,
+        )
+        qz = np.stack(
+            (
+                cos_half[:, 2],
+                np.zeros_like(sin_half[:, 2]),
+                np.zeros_like(sin_half[:, 2]),
+                sin_half[:, 2],
+            ),
+            axis=-1,
+        )
+        joint_quat[valid_mask] = quat_mul(quat_mul(qx, qy), qz).astype(np.float32)
         return joint_quat
-
-    def _build_parent_indices(self) -> np.ndarray:
-        """Build desired-joint parent indices for local quaternion derivation.
-
-        Preconditions:
-        - `desired_joint_names` uses the deployment human joint naming convention.
-
-        Postconditions:
-        - Returns a shape `(num_joints,)` int32 array with `-1` for roots.
-        """
-
-        parent_by_name = {
-            "Hips": -1,
-            "Spine1": "Hips",
-            "Spine2": "Spine1",
-            "Chest": "Spine2",
-            "Neck1": "Chest",
-            "Neck2": "Neck1",
-            "Head": "Neck2",
-            "HeadEnd": "Head",
-            "LeftShoulder": "Chest",
-            "LeftArm": "LeftShoulder",
-            "LeftForeArm": "LeftArm",
-            "LeftHand": "LeftForeArm",
-            "RightShoulder": "Chest",
-            "RightArm": "RightShoulder",
-            "RightForeArm": "RightArm",
-            "RightHand": "RightForeArm",
-            "LeftLeg": "Hips",
-            "LeftShin": "LeftLeg",
-            "LeftFoot": "LeftShin",
-            "LeftToeBase": "LeftFoot",
-            "LeftToeEnd": "LeftToeBase",
-            "RightLeg": "Hips",
-            "RightShin": "RightLeg",
-            "RightFoot": "RightShin",
-            "RightToeBase": "RightFoot",
-            "RightToeEnd": "RightToeBase",
-        }
-        parent_indices = np.full(len(self.desired_joint_names), -1, dtype=np.int32)
-        for index, joint_name in enumerate(self.desired_joint_names):
-            parent_name = parent_by_name.get(joint_name, -1)
-            if parent_name != -1 and parent_name in self.desired_joint_names:
-                parent_indices[index] = self.desired_joint_names.index(parent_name)
-        return parent_indices

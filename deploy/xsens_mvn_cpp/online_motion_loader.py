@@ -26,6 +26,7 @@ class OnlineHumanMotionLoader:
         window_size: int,
         initialization_timeout_s: float = 5.0,
         poll_interval_s: float = 0.002,
+        require_joint_angles: bool = True,
     ):
         """Create an online loader.
 
@@ -47,6 +48,7 @@ class OnlineHumanMotionLoader:
         self.window_size = int(window_size)
         self.initialization_timeout_s = float(initialization_timeout_s)
         self.poll_interval_s = float(poll_interval_s)
+        self.require_joint_angles = bool(require_joint_angles)
         self._window_samples: list[HumanMotionSample] = []
         self._started = False
 
@@ -154,13 +156,22 @@ class OnlineHumanMotionLoader:
         deadline = time.monotonic() + self.initialization_timeout_s
         while True:
             if self.source.has_frame():
-                return self._read_latest_sample()
+                sample = self._read_latest_sample()
+                if self._sample_is_initializable(sample):
+                    return sample
             if time.monotonic() >= deadline:
                 raise TimeoutError("timed out waiting for the first Xsens frame")
             time.sleep(self.poll_interval_s)
 
     def _read_latest_sample(self) -> HumanMotionSample:
         return self.adapter.to_human_sample(self.source.latest_frame())
+
+    def _sample_is_initializable(self, sample: HumanMotionSample) -> bool:
+        if not sample.valid_mask.any():
+            return False
+        if self.require_joint_angles and not sample.joint_angle_valid_mask.any():
+            return False
+        return True
 
     @staticmethod
     def _window_from_samples(samples: list[HumanMotionSample]) -> HumanMotionWindow:
@@ -179,5 +190,13 @@ class OnlineHumanMotionLoader:
                 [sample.human_joint_quat for sample in samples],
                 axis=0,
             ),
+            human_joint_angles=np.stack(
+                [sample.human_joint_angles for sample in samples],
+                axis=0,
+            ),
             valid_mask=np.stack([sample.valid_mask for sample in samples], axis=0),
+            joint_angle_valid_mask=np.stack(
+                [sample.joint_angle_valid_mask for sample in samples],
+                axis=0,
+            ),
         )

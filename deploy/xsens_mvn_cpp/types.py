@@ -20,9 +20,13 @@ class HumanMotionSample:
     human_body_pos_w: np.ndarray
     human_body_quat_w: np.ndarray
     human_joint_quat: np.ndarray
+    human_joint_angles: np.ndarray
     valid_mask: np.ndarray
+    joint_angle_valid_mask: np.ndarray
     timestamp_ns: int = 0
     frame_id: str = ""
+    source_sample_counter: int = 0
+    source_datagram_sequence: int = 0
 
 
 @dataclass(frozen=True)
@@ -40,7 +44,9 @@ class HumanMotionWindow:
     human_body_pos_w: np.ndarray
     human_body_quat_w: np.ndarray
     human_joint_quat: np.ndarray
+    human_joint_angles: np.ndarray
     valid_mask: np.ndarray
+    joint_angle_valid_mask: np.ndarray
 
 
 XSENS_TO_HUMAN_JOINT = {
@@ -70,4 +76,34 @@ XSENS_TO_HUMAN_JOINT = {
     "RightFoot": "right_foot",
     "RightToeBase": "right_toe",
     "RightToeEnd": "right_toe",
+}
+
+
+HUMAN_JOINT_TO_XSENS_JOINT_SEGMENTS = {
+    "Hips": (1, 1),
+    "Spine1": (1, 2),
+    "Spine2": (2, 3),
+    "Chest": (4, 5),
+    "Neck1": (5, 6),
+    "Neck2": (5, 6),
+    "Head": (6, 7),
+    "HeadEnd": (6, 7),
+    "LeftShoulder": (5, 12),
+    "LeftArm": (12, 13),
+    "LeftForeArm": (13, 14),
+    "LeftHand": (14, 15),
+    "RightShoulder": (5, 8),
+    "RightArm": (8, 9),
+    "RightForeArm": (9, 10),
+    "RightHand": (10, 11),
+    "LeftLeg": (1, 20),
+    "LeftShin": (20, 21),
+    "LeftFoot": (21, 22),
+    "LeftToeBase": (22, 23),
+    "LeftToeEnd": (22, 23),
+    "RightLeg": (1, 16),
+    "RightShin": (16, 17),
+    "RightFoot": (17, 18),
+    "RightToeBase": (18, 19),
+    "RightToeEnd": (18, 19),
 }

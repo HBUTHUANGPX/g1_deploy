@@ -58,18 +58,41 @@ class XsensMvnCppCli:
         loader.start()
         try:
             loader.initialize()
+            previous_sample = None
             for _ in range(args.samples):
                 loader.refresh()
                 sample = loader.latest_sample()
                 valid_ratio = float(sample.valid_mask.mean())
+                joint_angle_valid_ratio = float(sample.joint_angle_valid_mask.mean())
                 hips_index = sample.joint_names.index(cfg.human_anchor_name)
                 hips_pos = sample.human_body_pos_w[hips_index]
                 hips_quat = sample.human_body_quat_w[hips_index]
+                hips_joint_angles = sample.human_joint_angles[hips_index]
                 print(f"frame_id={sample.frame_id}")
+                print(f"sample_counter={sample.source_sample_counter}")
+                print(f"datagram_sequence={sample.source_datagram_sequence}")
                 print(f"timestamp_ns={sample.timestamp_ns}")
+                if previous_sample is not None:
+                    timestamp_delta_ms = (
+                        sample.timestamp_ns - previous_sample.timestamp_ns
+                    ) / 1_000_000.0
+                    sample_counter_delta = (
+                        sample.source_sample_counter
+                        - previous_sample.source_sample_counter
+                    )
+                    datagram_sequence_delta = (
+                        sample.source_datagram_sequence
+                        - previous_sample.source_datagram_sequence
+                    )
+                    print(f"delta_timestamp_ms={timestamp_delta_ms:.3f}")
+                    print(f"delta_sample_counter={sample_counter_delta}")
+                    print(f"delta_datagram_sequence={datagram_sequence_delta}")
                 print(f"valid_ratio={valid_ratio:.3f}")
+                print(f"joint_angle_valid_ratio={joint_angle_valid_ratio:.3f}")
                 print(f"{cfg.human_anchor_name}_pos={hips_pos.tolist()}")
                 print(f"{cfg.human_anchor_name}_quat_wxyz={hips_quat.tolist()}")
+                print(f"{cfg.human_anchor_name}_joint_angles_xyz={hips_joint_angles.tolist()}")
+                previous_sample = sample
                 time.sleep(args.period_s)
         finally:
             loader.close()

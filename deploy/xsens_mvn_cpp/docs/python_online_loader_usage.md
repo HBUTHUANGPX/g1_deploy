@@ -7,9 +7,8 @@ The online human-motion path is:
 1. `xsens_mvn_cpp_py.XsensMvnStreamReader` receives and parses UDP datagrams in
    C++ and keeps only the latest raw frame.
 2. `XsensPybindLatestFrameSource` wraps the pybind reader lifecycle for Python.
-3. `XsensRawFrameHumanMotionAdapter` maps raw segment world poses into the
-   desired human joint order and derives local `human_joint_quat` in the
-   consumer layer.
+3. `XsensRawFrameHumanMotionAdapter` maps raw segment world poses and raw
+   streamed joint angles into the desired human joint order.
 4. `OnlineHumanMotionLoader` samples the latest frame at the consumer rate and
    maintains a fixed-size window.
 5. `OnlineHumanMotionSimulator` consumes the latest sample and fixed window in
@@ -19,17 +18,36 @@ The pybind layer does not expose a consumed/unconsumed frame contract. The
 online loader intentionally reads the latest frame every refresh, even if the
 underlying Xsens sequence number did not change.
 
+## Optional Sample Transform
+
+The default online path does not load offline motion files and does not apply a
+runtime pose alignment. If a fixed 90-degree or 180-degree axis rotation is
+needed later, pass an object with `apply(sample) -> HumanMotionSample` through
+`OnlineHumanMotionLoader(sample_transformer=...)` or
+`OnlineHumanMotionSimulator(human_sample_transformer=...)`.
+
+That transform belongs in the consumer layer. The pybind receiver still keeps
+only the latest raw frame, and the adapter still preserves source Xsens
+semantics.
+
 Each sampled human frame contains the three arrays expected by the online human
 observation path:
 
 - `human_body_pos_w`: segment world positions;
 - `human_body_quat_w`: segment world quaternions;
-- `human_joint_quat`: local joint quaternions derived from parent and child
-  segment world quaternions.
+- `human_joint_quat`: local joint quaternions converted from streamed MVN
+  joint angles;
+- `human_joint_angles`: raw streamed MVN joint-angle triplets.
+
+It also contains `human_joint_angles`, which is mapped directly from MVN
+`Joint Angles` type-20 datagrams by parent-child segment id. These values are
+raw streamed angle triplets and are not converted by the pybind layer.
 
 `human_joint_quat` is not produced by the pybind layer. It is a consumer-layer
-derived field, which keeps the C++ stream parser free of retargeting and posture
-conversion policy.
+conversion from `human_joint_angles`, which keeps the C++ stream parser free of
+retargeting policy. `human_joint_angles` is the direct streamed joint-angle
+description and should be used when comparing against Xsens joint-angle
+semantics.
 
 ## Window Semantics
 
