@@ -13,7 +13,9 @@ from deploy.xsens_mvn_cpp import (
     XsensRawFrameHumanMotionAdapter,
 )
 
+import mujoco
 import numpy as np
+import time
 
 
 class OnlineHumanMotionSimulator(simulator):
@@ -57,8 +59,26 @@ class OnlineHumanMotionSimulator(simulator):
         return self.online_human_loader.window()
 
     def policy_loop(self):
+        policy_loop_start = time.perf_counter()
         self.online_human_loader.refresh()
         super().policy_loop()
+        self._sleep_until_next_policy_tick(policy_loop_start)
+
+    def sim_loop(self):
+        for _ in range(self.control_decimation):
+            if not cfg.motion_play:
+                tau = self._PD_control(self.target_dof_pos)
+                self.d.ctrl[:] = tau
+            if not self.paused:
+                self.prev_qpos = self.d.qpos.copy()
+                self.set_camera()
+                mujoco.mj_step(self.m, self.d)
+
+    def _sleep_until_next_policy_tick(self, policy_loop_start):
+        elapsed_s = time.perf_counter() - policy_loop_start
+        sleep_s = self.policy_dt - elapsed_s
+        if sleep_s > 0.0:
+            time.sleep(sleep_s)
 
     def draw_current_human_skeleton(self):
         sample = self._latest_online_human_sample()
