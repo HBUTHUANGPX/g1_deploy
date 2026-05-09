@@ -521,8 +521,8 @@ class simulator(infere):
             (
                 robot_anchor_rot6d,
                 robot_joint_pos,
-                ref_robot_body_pos_in_ref_anchor,
-                ref_robot_body_rot6d_in_ref_anchor,
+                # ref_robot_body_pos_in_ref_anchor,
+                # ref_robot_body_rot6d_in_ref_anchor,
             ),
             axis=-1,
         )
@@ -575,9 +575,9 @@ class simulator(infere):
         actor_human_feature = np.concatenate(
             (
                 human_anchor_rot6d,
-                human_joint_rot6d,
+                # human_joint_rot6d,
                 ref_human_body_pos_in_ref_anchor,
-                ref_human_body_rot6d_in_ref_anchor,
+                # ref_human_body_rot6d_in_ref_anchor,
             ),
             axis=-1,
         )

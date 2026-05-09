@@ -13,7 +13,7 @@ class cfg:
     #     # "motion": "01_slowly_forward_walk_120Hz"
     # }
     group = {
-        "policy": "deploy/policy/g1/2026-05-01_11-10-46_multi_node_test",
+        "policy": "deploy/policy/g1/2026-05-08_21-41-58_soma_cus_s",
         "motion": "nymeria_soma"
         # "motion": "item_pick_up_standing_R_001__A410"
         # "motion": "dance_hiphop_shuffle_square_R_fast_002__A318"
