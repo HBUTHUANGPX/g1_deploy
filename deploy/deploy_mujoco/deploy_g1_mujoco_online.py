@@ -2,8 +2,8 @@ from deploy.deploy_mujoco.deploy_g1_mujoco import simulator
 from deploy.utils.cfg import cfg
 from deploy.utils.math_func import (
     matrix_from_quat,
+    normalize,
     quat_apply_inverse,
-    quat_inv,
     quat_mul,
     subtract_frame_transforms,
 )
@@ -17,6 +17,12 @@ import numpy as np
 
 
 class OnlineHumanMotionSimulator(simulator):
+    ONLINE_HUMAN_ANCHOR_YAW_ALIGNMENT_DEGREES = -90.0
+    XSENS_TO_SOMA_ANCHOR_BASIS_QUAT_W = np.asarray(
+        [0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)],
+        dtype=np.float32,
+    )
+
     def __init__(
         self,
         xsens_udp_port=8001,
@@ -25,6 +31,9 @@ class OnlineHumanMotionSimulator(simulator):
         online_init_timeout_s=5.0,
     ):
         super().__init__()
+        self.online_human_anchor_yaw_alignment_quat_w = self._yaw_quat_wxyz(
+            self.ONLINE_HUMAN_ANCHOR_YAW_ALIGNMENT_DEGREES
+        )
         self.online_human_loader = OnlineHumanMotionLoader(
             source=XsensPybindLatestFrameSource(
                 udp_port=xsens_udp_port,
@@ -77,6 +86,9 @@ class OnlineHumanMotionSimulator(simulator):
         ref_human_anchor_quat_w = sample.human_body_quat_w[
             self.human_anchor_body_index, :
         ][None, :]
+        ref_human_anchor_quat_w = self._align_online_human_anchor_quat(
+            ref_human_anchor_quat_w
+        )
         _, ref_human_anchor_quat_in_sim_anchor = subtract_frame_transforms(
             np.zeros((1, 3), dtype=np.float32),
             sim_robot_anchor_quat_w,
@@ -94,20 +106,14 @@ class OnlineHumanMotionSimulator(simulator):
 
         num_envs = 1
         num_human_bodies = len(self.fsq_human_body_indexes)
-        human_anchor_quat = window.human_body_quat_w[:, self.human_anchor_body_index][
-            None, ...
-        ]
+        human_anchor_quat = self._align_online_human_anchor_quat(
+            window.human_body_quat_w[:, self.human_anchor_body_index][None, ...]
+        )
         human_anchor_rot6d = self._rot6d_from_quat(human_anchor_quat)
         human_anchor_pos = window.human_body_pos_w[:, self.human_anchor_body_index][
             None, ...
         ]
         human_body_pos = window.human_body_pos_w[:, self.fsq_human_body_indexes, :][
-            None, ...
-        ]
-        human_body_quat = window.human_body_quat_w[:, self.fsq_human_body_indexes, :][
-            None, ...
-        ]
-        human_joint_quat = window.human_joint_quat[:, self.fsq_human_body_indexes, :][
             None, ...
         ]
 
@@ -122,33 +128,43 @@ class OnlineHumanMotionSimulator(simulator):
             human_anchor_quat_w.reshape(-1, 4),
             ref_human_body_pos_from_ref_anchor_w.reshape(-1, 3),
         ).reshape(num_envs, window_size, -1)
-        ref_human_body_quat_in_ref_anchor = quat_mul(
-            quat_inv(human_anchor_quat_w.reshape(-1, 4)),
-            human_body_quat.reshape(-1, 4),
-        )
-        ref_human_body_rot6d_in_ref_anchor = self._rot6d_from_quat(
-            ref_human_body_quat_in_ref_anchor
-        ).reshape(num_envs, window_size, -1)
 
-        human_joint_rot6d = self._rot6d_from_quat(human_joint_quat).reshape(
-            num_envs, window_size, -1
-        )
         actor_human_feature = np.concatenate(
             (
                 human_anchor_rot6d,
-                human_joint_rot6d,
                 ref_human_body_pos_in_ref_anchor,
-                ref_human_body_rot6d_in_ref_anchor,
             ),
             axis=-1,
         )
         return actor_human_feature.reshape(-1)
+
+    def _align_online_human_anchor_quat(self, anchor_quat_w):
+        basis_quat = np.broadcast_to(
+            self.XSENS_TO_SOMA_ANCHOR_BASIS_QUAT_W,
+            anchor_quat_w.shape,
+        )
+        yaw_quat = np.broadcast_to(
+            self.online_human_anchor_yaw_alignment_quat_w,
+            anchor_quat_w.shape,
+        )
+        aligned_quat = quat_mul(anchor_quat_w, basis_quat)
+        aligned_quat = quat_mul(yaw_quat, aligned_quat)
+        return normalize(aligned_quat).astype(np.float32)
 
     @staticmethod
     def _rot6d_from_quat(quaternions):
         quaternions = np.asarray(quaternions)
         mat = matrix_from_quat(quaternions)
         return mat[..., :2].reshape(mat.shape[:-2] + (6,))
+
+    @staticmethod
+    def _yaw_quat_wxyz(yaw_degrees):
+        yaw_radians = np.deg2rad(yaw_degrees)
+        half_yaw = yaw_radians * 0.5
+        return np.asarray(
+            [np.cos(half_yaw), 0.0, 0.0, np.sin(half_yaw)],
+            dtype=np.float32,
+        )
 
 
 if __name__ == "__main__":
