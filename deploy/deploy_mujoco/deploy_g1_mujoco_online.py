@@ -17,7 +17,7 @@ import numpy as np
 
 
 class OnlineHumanMotionSimulator(simulator):
-    ONLINE_HUMAN_ANCHOR_YAW_ALIGNMENT_DEGREES = -90.0
+    ONLINE_HUMAN_ANCHOR_YAW_ALIGNMENT_DEGREES = 0.0
     XSENS_TO_SOMA_ANCHOR_BASIS_QUAT_W = np.asarray(
         [0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)],
         dtype=np.float32,
