@@ -14,7 +14,14 @@ class ObsCfg:
     class RobotFSQCfg(GroupCfg):
         actor_ref_robot_fsq_feature_window = TermCfg()
 
+    class RobotTokenCfg(GroupCfg):
+        actor_robot_token = TermCfg()
+
+    class HumanTokenCfg(GroupCfg):
+        actor_human_token = TermCfg()
     actor_obs = PolicyCfg()
     human_obs = HumanFSQCfg()
     robot_obs = RobotFSQCfg()
+    human_token_obs = RobotTokenCfg()
+    robot_token_obs = HumanTokenCfg()
     

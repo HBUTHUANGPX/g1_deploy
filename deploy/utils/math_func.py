@@ -186,3 +186,29 @@ def subtract_frame_transforms(
     else:
         t12 = quat_apply(q10, -t01)
     return t12, q12
+
+def rot6d_from_quat(quaternions: np.ndarray) -> np.ndarray:
+    """Convert quaternions to the flattened first two rotation-matrix columns.
+
+    Args:
+        quaternions: The quaternion orientation in (w, x, y, z). Shape is (..., 4).
+
+    Returns:
+        Flattened 6D rotation representation. Shape is (..., 6).
+    """
+    quaternions = np.asarray(quaternions)
+    r, i, j, k = np.moveaxis(quaternions, -1, 0)
+    two_s = 2.0 / np.sum(quaternions * quaternions, axis=-1)
+
+    o = np.stack(
+        (
+            1 - two_s * (j * j + k * k),
+            two_s * (i * j - k * r),
+            two_s * (i * j + k * r),
+            1 - two_s * (i * i + k * k),
+            two_s * (i * k - j * r),
+            two_s * (j * k + i * r),
+        ),
+        -1,
+    )
+    return o.reshape(quaternions.shape[:-1] + (6,))

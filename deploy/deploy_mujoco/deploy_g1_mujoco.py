@@ -13,33 +13,6 @@ import mujoco
 np.set_printoptions(precision=16, linewidth=100, threshold=np.inf, suppress=True)
 
 
-def rot6d_from_quat(quaternions: np.ndarray) -> np.ndarray:
-    """Convert quaternions to the flattened first two rotation-matrix columns.
-
-    Args:
-        quaternions: The quaternion orientation in (w, x, y, z). Shape is (..., 4).
-
-    Returns:
-        Flattened 6D rotation representation. Shape is (..., 6).
-    """
-    quaternions = np.asarray(quaternions)
-    r, i, j, k = np.moveaxis(quaternions, -1, 0)
-    two_s = 2.0 / np.sum(quaternions * quaternions, axis=-1)
-
-    o = np.stack(
-        (
-            1 - two_s * (j * j + k * k),
-            two_s * (i * j - k * r),
-            two_s * (i * j + k * r),
-            1 - two_s * (i * i + k * k),
-            two_s * (i * k - j * r),
-            two_s * (j * k + i * r),
-        ),
-        -1,
-    )
-    return o.reshape(quaternions.shape[:-1] + (6,))
-
-
 class simulator(infere):
 
     def __init__(self):
@@ -69,6 +42,7 @@ class simulator(infere):
             compress=False,
         )
         self.data_save = []
+        self.first_flag = True
 
     def _load_human_parent_indices(self):
         motion_files = getattr(self.motion, "motion_file", None)
@@ -336,6 +310,7 @@ class simulator(infere):
                     ...
                 mujoco.mj_step(self.m, self.d)
                 self.viewer.sync()
+            self.perpare_data()
             self.policy_loop()
             # print(self.time_step, self.motion.time_step_total)
             log["dof_positions"].append(np.copy(self.d.qpos[7:]))
@@ -387,6 +362,21 @@ class simulator(infere):
         print("stop")
         self.video_recorder.stop()
 
+    def perpare_data(self):
+        if self.first_flag:
+            self.first_flag = False
+            self.init_ref_human_anchor_quat_w = self.motion.human_body_quat_w[
+            0, self.human_anchor_body_index, :]
+            q = self.init_ref_human_anchor_quat_w / np.linalg.norm(self.init_ref_human_anchor_quat_w)
+            w, x, y, z = q
+            self.init_ref_human_anchor_quat_w_yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+            # half = -0.5 * -np.pi/2
+            half = 0
+            # half = -0.5 * self.init_ref_human_anchor_quat_w_yaw
+            self.yaw_comp_quat_ref_human_anchor_quat_w = np.array(
+                [np.cos(half), 0.0, 0.0, np.sin(half)], dtype=np.float32
+            )
+
     def policy_loop(self):
         # print("="*(20))
         self.counter += 1
@@ -421,6 +411,12 @@ class simulator(infere):
         self.viewer.sync()
         self.update_vel_geom()
 
+    def _obs_actor_robot_token(self):
+        return self.motion.actor_q_robot[int(self.time_step)]
+    
+    def _obs_actor_human_token(self):
+        return self.motion.actor_q_human[int(self.time_step)]
+     
     def _obs_ref_human_anchor_rot6d_in_sim_anchor(self):
         self.pin.mujoco_to_pinocchio(
             self.d.qpos[7:],
@@ -434,6 +430,9 @@ class simulator(infere):
             self.human_anchor_body_index,
             :,
         ]  # shape [n,4]
+        ref_human_anchor_quat_w = quat_mul(
+            self.yaw_comp_quat_ref_human_anchor_quat_w, ref_human_anchor_quat_w
+        )
         q01 = sim_robot_anchor_quat_w
         q02 = ref_human_anchor_quat_w
         if q02 is not None and q02.ndim == 1:

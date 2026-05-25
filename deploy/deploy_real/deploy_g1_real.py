@@ -269,6 +269,9 @@ class real(infere, mini_g1_real):
         super().__init__()
         super(infere,self).__init__(config)
         self.first_flag = True
+        self.human_anchor_body_index = cfg.desire_human_joint_names.index(
+            cfg.human_anchor_name
+        )
 
     def perpare_data(self):
         super().perpare_data()
@@ -276,15 +279,38 @@ class real(infere, mini_g1_real):
             self.first_flag = False
             self.init_quat = self.quat.copy()
             # compute initial yaw (z-axis) and build compensation quaternion
-            q = self.init_quat / np.linalg.norm(self.init_quat)
+            # q = self.init_quat / np.linalg.norm(self.init_quat)
+            # w, x, y, z = q
+            # self.init_yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+            # half = -0.5 * self.init_yaw
+            # self.yaw_comp_quat = np.array(
+            #     [np.cos(half), 0.0, 0.0, np.sin(half)], dtype=np.float32
+            # )
+            self.yaw_comp_quat = self.get_yaw_quat(self.init_quat)
+            self.init_ref_human_anchor_quat_w = self.motion.human_body_quat_w[
+            0, self.human_anchor_body_index, :]
+            q = self.init_ref_human_anchor_quat_w / np.linalg.norm(self.init_ref_human_anchor_quat_w)
             w, x, y, z = q
-            self.init_yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
-            half = -0.5 * self.init_yaw
-            self.yaw_comp_quat = np.array(
+            self.init_ref_human_anchor_quat_w_yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+            half = -0.5 * -np.pi/2
+            # half = -0.5 * self.init_ref_human_anchor_quat_w_yaw
+            self.yaw_comp_quat_ref_human_anchor_quat_w = np.array(
                 [np.cos(half), 0.0, 0.0, np.sin(half)], dtype=np.float32
             )
+            # self.yaw_comp_quat_ref_human_anchor_quat_w = self.get_yaw_quat(self.init_ref_human_anchor_quat_w)
+
         # compensate current quaternion with initial yaw offset
         self.quat = quat_mul(self.yaw_comp_quat, self.quat)
+
+    def get_yaw_quat(self, init_quat):
+        q = init_quat / np.linalg.norm(init_quat)
+        w, x, y, z = q
+        init_yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+        half = -0.5 * init_yaw
+        yaw_comp_quat = np.array(
+                [np.cos(half), 0.0, 0.0, np.sin(half)], dtype=np.float32
+            )
+        return yaw_comp_quat
 
     def move_to_default_pos(self):
         print("[REAL] Moving to default pos.")
@@ -351,7 +377,7 @@ class real(infere, mini_g1_real):
         #         infer
         # =========================
         self.minimum_infer()
-        
+
         if self.time_step >= self.motion.time_step_total:
             self.time_step = 1
         # send the command
@@ -363,35 +389,59 @@ class real(infere, mini_g1_real):
         if time_until_next_step > 0:
             time.sleep(time_until_next_step)
 
+    def _obs_actor_robot_token(self):
+        return self.motion.actor_q_robot[int(self.time_step)]
+
+    def _obs_actor_human_token(self):
+        return self.motion.actor_q_human[int(self.time_step)]
+
     def _obs_motion_joint_pos_command(self):
         return np.copy(self.motion.joint_pos[int(self.time_step)])
 
     def _obs_motion_joint_vel_command(self):
         return np.copy(self.motion.joint_vel[int(self.time_step)])
 
-    def _obs_motion_ref_ori_b(self):
+    def _obs_ref_human_anchor_rot6d_in_sim_anchor(self):
         self.pin.mujoco_to_pinocchio(
             self.qj,
             base_pos=np.array([0,0,0],dtype=np.float32),
             base_quat=self.quat[[1, 2, 3, 0]],
         )
         _quat = self.pin.get_link_quaternion(cfg.motion_reference_body)
-        self.robot_ref_quat_w = np.expand_dims(_quat, axis=0)  # shape [n,4]
-        self.ref_quat_w = self.motion.body_quat_w[
-            int(self.time_step), cfg.motion_body_names.index(cfg.motion_reference_body), :
+        sim_robot_anchor_quat_w = np.expand_dims(_quat, axis=0)  # shape [n,4]
+        ref_human_anchor_quat_w = self.motion.human_body_quat_w[
+            int(self.time_step), 
+            self.human_anchor_body_index, 
+            :
         ]  # shape [n,4]
-        q01 = self.robot_ref_quat_w
-        q02 = self.ref_quat_w
+        ref_human_anchor_quat_w = quat_mul(
+            self.yaw_comp_quat_ref_human_anchor_quat_w, ref_human_anchor_quat_w
+        )
+
+        q01 = sim_robot_anchor_quat_w
+        q02 = ref_human_anchor_quat_w
         if q02 is not None and q02.ndim == 1:
             q02 = np.expand_dims(q02, axis=0)
-        q10 = quat_inv(q01)
-        if q02 is not None:
-            q12 = quat_mul(q10, q02)
-        else:
-            q12 = q10
-        mat = matrix_from_quat(q12)
+
+        _, ref_human_anchor_quat_in_sim_anchor = subtract_frame_transforms(
+            np.zeros((1, 3), dtype=np.float32),
+            q01,
+            np.zeros((1, 3), dtype=np.float32),
+            q02,
+        )
+        mat = matrix_from_quat(ref_human_anchor_quat_in_sim_anchor)
         motion_ref_ori_b = mat[..., :2].reshape(mat.shape[0], -1)  # shape [n,6]
         return motion_ref_ori_b
+
+    def _obs_sim_robot_anchor_rot6d_w(self):
+        self.pin.mujoco_to_pinocchio(
+            self.qj,
+            base_pos=np.array([0,0,0],dtype=np.float32),
+            base_quat=self.quat[[1, 2, 3, 0]],
+        )
+        _quat = self.pin.get_link_quaternion(cfg.motion_reference_body)
+        sim_robot_anchor_quat_w = np.expand_dims(_quat, axis=0)
+        return rot6d_from_quat(sim_robot_anchor_quat_w)
 
     def _obs_base_ang_vel(self):
         return self.ang_vel

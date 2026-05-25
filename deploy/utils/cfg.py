@@ -13,12 +13,13 @@ class cfg:
     #     # "motion": "01_slowly_forward_walk_120Hz"
     # }
     group = {
-        "policy": "deploy/policy/g1/2026-05-08_21-41-58_soma_cus_s",
-        "motion": "nymeria_soma"
-        # "motion": "item_pick_up_standing_R_001__A410"
+        "policy": "deploy/policy/g1/2026-05-22_13-59-19_soma_cus_s",
+        # "motion": "dance_basic_chaines_180_R_001__A306"
+        "motion": "item_pick_up_standing_R_001__A410"
         # "motion": "dance_hiphop_shuffle_square_R_fast_002__A318"
         # "motion": "Neutral_walk_forward_002__A057"
         # "motion": "Neutral_throw_ball_001__A057"
+        # "motion": "wave_R_001__A428"
         # "motion": "big_light_one_hand_pick_up_front_low_R_005__A508"
     }
     policy_path = (

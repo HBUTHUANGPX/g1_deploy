@@ -1,5 +1,6 @@
 import os
 import numpy as np
+from pathlib import Path
 from collections.abc import Sequence
 
 
@@ -39,6 +40,8 @@ class MotionLoader:
         self._prepare_np_list()
         for _file in self.motion_file:
             data = np.load(_file)
+            p = Path(_file)
+            token = np.load(p.with_name(p.stem + "_token.tknpz"), allow_pickle=True)
             if self.fps is None:
                 self.fps = data["fps"]
             else:
@@ -50,6 +53,10 @@ class MotionLoader:
             self._validate_human_joint_names(data)
             self._append_motion_data(data)
 
+            num_frames = self.np_joint_pos_list[-1].shape[0]
+            self._validate_token_data(token, _file, num_frames)
+            self._append_token_data(token)
+            
         # Concatenate along time dimension (dim=0)
         self.joint_pos = np.concatenate(self.np_joint_pos_list, axis=0)
         self.joint_vel = np.concatenate(self.np_joint_vel_list, axis=0)
@@ -66,6 +73,8 @@ class MotionLoader:
         self.human_body_pos_w = np.concatenate(self.np_human_body_pos_w_list, axis=0)
         self.human_body_quat_w = np.concatenate(self.np_human_body_quat_w_list, axis=0)
         self.human_joint_quat = np.concatenate(self.np_human_joint_quat_list, axis=0)
+        self.actor_q_human = np.concatenate(self.np_actor_q_human_list, axis=0)
+        self.actor_q_robot = np.concatenate(self.np_actor_q_robot_list, axis=0)
         print("motion clips:")
         print("self.joint_pos.shape: ", self.joint_pos.shape)
         print("self.joint_vel.shape: ", self.joint_vel.shape)
@@ -88,6 +97,8 @@ class MotionLoader:
         self.np_human_body_pos_w_list: list[np.ndarray] = []
         self.np_human_body_quat_w_list: list[np.ndarray] = []
         self.np_human_joint_quat_list: list[np.ndarray] = []
+        self.np_actor_q_human_list: list[np.ndarray] = []
+        self.np_actor_q_robot_list: list[np.ndarray] = []
 
     def _append_motion_data(self, data: np.lib.npyio.NpzFile) -> None:
         self.np_joint_pos_list.append(
@@ -191,3 +202,31 @@ class MotionLoader:
             assert (
                 self.file_body_names == file_body_names
             ), f"Motion file body names {file_body_names} do not match expected {self.file_body_names}."
+
+    def _validate_token_data(
+        self,
+        token: np.lib.npyio.NpzFile,
+        motion_path: str,
+        num_frames: int,
+    ) -> None:
+        required_fields = (
+            "actor_q_human",
+            "actor_q_robot",
+            "critic_q_human",
+            "critic_q_robot",
+        )
+        for field in required_fields:
+            assert field in token, f"{motion_path} 对应 token 文件缺少字段 {field}."
+            assert (
+                token[field].ndim == 2
+            ), f"{motion_path} 对应 token 字段 {field} 必须是 [num_frames, latent_dim]."
+            assert (
+                token[field].shape[0] == num_frames
+            ), (
+                f"{motion_path} 对应 token 字段 {field} 帧数为 "
+                f"{token[field].shape[0]}，motion 帧数为 {num_frames}."
+            )
+
+    def _append_token_data(self, token: np.lib.npyio.NpzFile) -> None:
+        self.np_actor_q_human_list.append(token["actor_q_human"].astype(np.float32))
+        self.np_actor_q_robot_list.append(token["actor_q_robot"].astype(np.float32))

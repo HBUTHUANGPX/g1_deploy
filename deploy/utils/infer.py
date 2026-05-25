@@ -128,42 +128,33 @@ class infere:
         session = ort.InferenceSession(onnx_path, providers=providers)
         return session
 
-    def run_onnx_inference(self, session, actor_obs, human_fsq_obs, robot_fsq_obs, selector):
+    def run_onnx_inference(self, session, actor_obs, actor_token):
         # 转换为numpy array并确保数据类型正确
         actor_obs = np.asarray(actor_obs,dtype=np.float32)
-        human_fsq_obs = np.asarray(human_fsq_obs,dtype=np.float32)
-        robot_fsq_obs = np.asarray(robot_fsq_obs,dtype=np.float32)
+        actor_token = np.asarray(actor_token,dtype=np.float32)
         # 获取输入名称
         actor_obs_name = session.get_inputs()[0].name
-        human_fsq_obs_name = session.get_inputs()[1].name
-        robot_fsq_obs_name = session.get_inputs()[2].name
-        selector_name = session.get_inputs()[3].name
+        actor_token_name = session.get_inputs()[1].name
         # 运行推理
         (
-            actions,q_human,q_robot
+            actions
         ) = session.run(
             None,
             {
                 actor_obs_name: actor_obs,
-                human_fsq_obs_name: human_fsq_obs,
-                robot_fsq_obs_name: robot_fsq_obs,
-                selector_name: selector,
+                actor_token_name: actor_token,
             },
         )
-        return actions,q_human,q_robot
+        return actions
 
     def _policy_reasoning(self):
 
-        act,q_human,q_robot= self.run_onnx_inference(
+        act= self.run_onnx_inference(
             self.policy,
             self.actor_obs,
-            self.human_obs,
-            self.robot_obs,
-            np.array([[0]], dtype=np.float32),
-        ) # 1用的是robot encoder，0用的是human encoder
+            self.actor_token,
+        )[0] # 1用的是robot encoder，0用的是human encoder
         self.action[:] = act.copy()
-        self.q_human[:] = q_human.copy()
-        self.q_robot[:] = q_robot.copy()
 
     def post_action(self):
         action = (
@@ -187,6 +178,7 @@ class infere:
         self.h_action = self.action.copy()
         self._policy_reasoning()
         self.post_action()
+        # self.time_step = 0
         self.time_step+=1
         # self.time_step=1
 
@@ -242,12 +234,19 @@ class infere:
         self.actor_obs = np.clip(
             self.obs_manager.compute_group("actor_obs", update_history=True), -10, 10
         )
-        self.human_obs = np.clip(
-            self.obs_manager.compute_group("human_obs", update_history=True), -10, 10
+        self.human_token_obs = np.clip(
+            self.obs_manager.compute_group("human_token_obs", update_history=False), -1e5, 1e5
         )
-        self.robot_obs = np.clip(
-            self.obs_manager.compute_group("robot_obs", update_history=True), -10, 10
+        self.robot_token_obs = np.clip(
+            self.obs_manager.compute_group("robot_token_obs", update_history=False), -1e5, 1e5
         )
+        self.actor_token = self.robot_token_obs
+        # self.human_obs = np.clip(
+        #     self.obs_manager.compute_group("human_obs", update_history=True), -10, 10
+        # )
+        # self.robot_obs = np.clip(
+        #     self.obs_manager.compute_group("robot_obs", update_history=True), -10, 10
+        # )
         # self.human_obs = np.asarray(human_fsq)
         # self.robot_obs = np.asarray(robot_fsq)
 
@@ -273,4 +272,10 @@ class infere:
         raise NotImplementedError
 
     def _obs_actor_ref_human_fsq_feature_window(self):
+        raise NotImplementedError
+    
+    def _obs_actor_robot_token(self):
+        raise NotImplementedError
+    
+    def _obs_actor_human_token(self):
         raise NotImplementedError
