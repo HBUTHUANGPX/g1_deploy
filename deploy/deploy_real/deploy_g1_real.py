@@ -265,10 +265,16 @@ class mini_g1_real:
         time.sleep(self.config.control_dt)
 
 class real(infere, mini_g1_real):
+    RL_MODE_DEFAULT_POS = "default_pos_rl"
+    RL_MODE_RUNNING = "running_rl"
+
     def __init__(self, config: Config):
         super().__init__()
         super(infere,self).__init__(config)
         self.first_flag = True
+        self.rl_mode = self.RL_MODE_DEFAULT_POS
+        self.prev_button_x = 0
+        self.prev_button_b = 0
         self.human_anchor_body_index = cfg.desire_human_joint_names.index(
             cfg.human_anchor_name
         )
@@ -369,16 +375,37 @@ class real(infere, mini_g1_real):
             self.send_cmd(self.low_cmd)
             time.sleep(self.config.control_dt)
 
+    def update_rl_mode(self):
+        button_x = self.remote_controller.button[KeyMap.X]
+        button_b = self.remote_controller.button[KeyMap.B]
+        x_pressed = button_x == 1 and self.prev_button_x == 0
+        b_pressed = button_b == 1 and self.prev_button_b == 0
+
+        if x_pressed and self.rl_mode != self.RL_MODE_RUNNING:
+            self.rl_mode = self.RL_MODE_RUNNING
+            self.time_step = 0
+            print("[REAL] Enter running rl mode.")
+        elif b_pressed and self.rl_mode != self.RL_MODE_DEFAULT_POS:
+            self.rl_mode = self.RL_MODE_DEFAULT_POS
+            self.time_step = 0
+            print("[REAL] Enter default pos rl mode.")
+
+        self.prev_button_x = button_x
+        self.prev_button_b = button_b
+
     def run(self):
         step_start = time.time()
         self.counter += 1
         self.perpare_data()
+        self.update_rl_mode()
         # =========================
         #         infer
         # =========================
         self.minimum_infer()
 
-        if self.time_step >= self.motion.time_step_total:
+        if self.rl_mode == self.RL_MODE_DEFAULT_POS:
+            self.time_step = 0
+        elif self.time_step >= self.motion.time_step_total:
             self.time_step = 1
         # send the command
         # self.update_cmd(target_pos = np.copy(self.motion.joint_pos[int(self.time_step)])[self.isaac_sim2mujoco_index],kps = self.P_gains,kds = self.D_gains)
