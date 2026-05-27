@@ -14,13 +14,16 @@ class cfg:
     # }
     group = {
         "policy": "deploy/policy/g1/2026-05-22_13-59-19_soma_cus_s",
-        # "motion": "dance_basic_chaines_180_R_001__A306"
-        "motion": "item_pick_up_standing_R_001__A410"
-        # "motion": "dance_hiphop_shuffle_square_R_fast_002__A318"
-        # "motion": "Neutral_walk_forward_002__A057"
-        # "motion": "Neutral_throw_ball_001__A057"
-        # "motion": "wave_R_001__A428"
         # "motion": "big_light_one_hand_pick_up_front_low_R_005__A508"
+        # "motion": "body_stretch_1_004__A069_token"
+        # "motion": "dance_basic_chaines_180_R_001__A306"
+        # "motion": "dance_hiphop_shuffle_square_R_fast_002__A318"
+        # "motion": "high_jump_R_001__A277"
+        # "motion": "item_pick_up_standing_R_001__A410"
+        # "motion": "Neutral_throw_ball_001__A057"
+        # "motion": "Neutral_walk_forward_002__A057"
+        "motion": "small_light_one_hand_pick_up_front_low_002__A507"
+        # "motion": "wave_R_001__A428"
     }
     policy_path = (
         current_path
