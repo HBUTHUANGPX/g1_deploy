@@ -3,10 +3,12 @@ from deploy.utils.motor_conf import *
 import os
 current_path = os.getcwd()
 print(current_path)
+HUMAN = 1
+ROBOT = 0
 class cfg:
     simulator_dt = 0.002
     policy_dt = 0.02
-
+    TOKEN_SELECTOR = ROBOT # ROBOT， HUMAN
     # group = {
     #     "policy": "deploy/policy/g1/2026-02-26_22-16-14_G1_slowly_walk",
     #     "motion": "03_fast_forward_walk_120Hz"
@@ -14,34 +16,38 @@ class cfg:
     # }
     group = {
         "policy": "deploy/policy/g1/2026-05-22_13-59-19_soma_cus_s",
-        # "motion": "big_light_one_hand_pick_up_front_low_R_005__A508"
-        # "motion": "body_stretch_1_004__A069_token"
-        # "motion": "dance_basic_chaines_180_R_001__A306"
-        # "motion": "dance_hiphop_shuffle_square_R_fast_002__A318"
-        # "motion": "high_jump_R_001__A277"
-        # "motion": "item_pick_up_standing_R_001__A410"
-        # "motion": "Neutral_throw_ball_001__A057"
-        # "motion": "Neutral_walk_forward_002__A057"
-        "motion": "small_light_one_hand_pick_up_front_low_002__A507"
-        # "motion": "wave_R_001__A428"
+        "motion": 
+        [
+            # "big_light_one_hand_pick_up_front_low_R_005__A508",
+            # "body_stretch_1_004__A069",
+            # "dance_basic_chaines_180_R_001__A306",
+            # "dance_hiphop_shuffle_square_R_fast_002__A318",
+            # "high_jump_R_001__A277",
+            # "item_pick_up_standing_R_001__A410",
+            # "Neutral_throw_ball_001__A057",
+            # "Neutral_walk_forward_002__A057",
+            # "small_light_one_hand_pick_up_front_low_002__A507",
+            "wave_R_001__A428"
+        ]
     }
-    policy_path = (
+    policy_raw_path = (
         current_path
         + "/"
         + group["policy"]
+    )
+    policy_path = (
+        policy_raw_path
         + "/policy.onnx"
     )
     asset_path = current_path + "/deploy/assets/unitree_g1"
     mjcf_path = asset_path + "/g1_29dof_rev_1_0.xml"
     urdf_path = asset_path + "/g1_29dof_mode_15.urdf"
-    motion_file = (
-        current_path
-        + "/"
-        + group["policy"]
-        + "/motion/"
-        + group["motion"]
-        + ".npz"
-    )
+    motion_names = group["motion"]
+    if isinstance(motion_names, str):
+        motion_names = [motion_names]
+    motion_file = []
+    for name in motion_names:
+        motion_file.append(os.path.join(policy_raw_path, "motion", name + ".npz"))
     only_leg_flag = False  # True, False
     with_wrist_flag = True  # True, False
 

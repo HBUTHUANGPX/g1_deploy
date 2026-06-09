@@ -18,7 +18,7 @@ class infere:
         self.pin = pin_mj(cfg)
         self.obs_manager = SimpleObservationManager(ObsCfg(), self)
         self.first_frame_pos = np.copy(self.motion.joint_pos[0])[self.isaac_sim2mujoco_index]
-
+        self.token_selector = cfg.TOKEN_SELECTOR
     def _init_policy_conf(self):
         self.body_indexes = np.asarray(
             self.motion_body_names_in_isaacsim_index, dtype=np.int64
@@ -240,7 +240,7 @@ class infere:
         self.robot_token_obs = np.clip(
             self.obs_manager.compute_group("robot_token_obs", update_history=False), -1e5, 1e5
         )
-        self.actor_token = self.robot_token_obs
+        self.actor_token = self.human_token_obs * self.token_selector + self.robot_token_obs * (1-self.token_selector)
         # self.human_obs = np.clip(
         #     self.obs_manager.compute_group("human_obs", update_history=True), -10, 10
         # )
